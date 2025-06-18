@@ -218,7 +218,7 @@ class DataPreprocessor:
 
     
     # said to need fixed
-    def apply_clahe_float(arr_uint16: np.ndarray, clip_limit : float = 2.0, tile_grid_size : Tuple[int, int] = (8,8)) -> np.ndarray:
+    def apply_clahe_float(arr_uint16 : np.ndarray, clip_limit : float = 2.0, tile_grid_size : Tuple[int, int] = (8,8)) -> np.ndarray:
         """        
         Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) on uint16 array.
 
@@ -237,7 +237,19 @@ class DataPreprocessor:
         
         return clahe_uint16
     
-    def apply_bilateral_filter_float(arr, d=9, sigma_color=75, sigma_space=75):
+    def apply_bilateral_filter_float(arr : np.ndarray, d : int = 9, sigma_color : int = 75, sigma_space : int = 75) -> np.ndarray:
+        """        
+        Apply bilateral filter on float32 array.
+        
+        Args:            
+            arr: Input array in float32 format
+            d: Diameter of pixel neighborhood   
+            sigma_color: Filter sigma in color space
+            sigma_space: Filter sigma in coordinate space
+        
+        Returns:
+            Filtered array in float32 format
+        """
         # Ensure float32
         arr_float32 = arr.astype(np.float32)
         
