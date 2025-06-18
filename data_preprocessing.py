@@ -191,28 +191,31 @@ class DataPreprocessor:
         return resized
     
     # document said int8
-    def apply_nlm_denoising_float(arr: np.ndarray) -> np.ndarray:
+    # def apply_nlm_denoising_float(arr: np.ndarray) -> np.ndarray:
+    def apply_nlm_denoising_uint16(arr_uint16: np.ndarray, h: float = 10.0, template_window_size: int = 7, search_window_size: int = 21) -> np.ndarray:
         """        
         Apply Non-Local Means denoising on float32 array.
 
         Args:
-            arr: Input array
+            arr_uint16: Input array in uint16 format
+            h: Filtering strength
+            template_window_size: Size in pixels of the template patch
+            search_window_size: Size in pixels of the window used to compute weighted average
 
         Returns:
             Denoised array
         """
-        # Ensure float32 format
-        arr_float32 = arr.astype(np.float32)
         
-        # Apply NL means denoising on float data
         denoised = cv2.fastNlMeansDenoising(
-            arr_float32, 
-            None, 
-            h=0.1,          # Lower h for float data (typically 0.05-0.2)
-            templateWindowSize=7,
-            searchWindowSize=21
+            src=arr_uint16,
+            h=h,
+            templateWindowSize=template_window_size,
+            searchWindowSize=search_window_size,
+            normType=cv2.NORM_L1
         )
+
         return denoised
+
     
     # said to need fixed
     def apply_clahe_float(arr_uint16: np.ndarray, clip_limit : float = 2.0, tile_grid_size : Tuple[int, int] = (8,8)) -> np.ndarray:
@@ -233,6 +236,42 @@ class DataPreprocessor:
         clahe_uint16 = clahe.apply(arr_uint16)
         
         return clahe_uint16
+    
+    def apply_bilateral_filter_float(arr, d=9, sigma_color=75, sigma_space=75):
+        # Ensure float32
+        arr_float32 = arr.astype(np.float32)
+        
+        # Apply bilateral filter directly on float data
+        filtered = cv2.bilateralFilter(
+            arr_float32, 
+            d=d,
+            sigmaColor=sigma_color,
+            sigmaSpace=sigma_space
+        )
+        return filtered
+    
+    def enhance_image(self, arr: np.ndarray, 
+                 apply_nlm: bool = True, 
+                 apply_clahe: bool = True, 
+                 apply_bilateral: bool = True) -> np.ndarray:
+        """
+        Apply image enhancement techniques while preserving float precision.
+        """
+        enhanced = arr.copy()
+        
+        if apply_nlm:
+            self.logger.debug("Applying NL-means denoising...")
+            enhanced = self.apply_nlm_denoising_float(enhanced)
+        
+        if apply_clahe:
+            self.logger.debug("Applying CLAHE...")
+            enhanced = self.apply_clahe_float(enhanced)
+        
+        if apply_bilateral:
+            self.logger.debug("Applying bilateral filter...")
+            enhanced = self.apply_bilateral_filter_float(enhanced)
+        
+        return enhanced
 
     def attach_patch_method(self):
         """Placeholder for attaching patch logic"""
@@ -252,6 +291,9 @@ class DataPreprocessor:
         try:
             self.logger.info(f"Processing {file_path}...")
             arr = self.dcm_to_array(file_path)
+
+            # Apply enhancements BEFORE normalization
+            arr = self.enhance_image(arr)
             
             if self.crop:
                 arr = self.crop_image(arr)
