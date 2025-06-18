@@ -2,6 +2,7 @@
 import numpy as np
 import pydicom
 from pydicom.pixel_data_handlers.util import apply_voi_lut
+import pydicom
 import cv2
 from pathlib import Path
 import logging
@@ -96,8 +97,8 @@ class DataPreprocessor:
         try:
             if self.apply_voilut:
                 dicom = pydicom.dcmread(path)
-                arr = dicom.pixel_array.astype(np.float32)  # Ensure float for processing, original was uint16
-                arr = apply_voi_lut(arr, dicom)
+                # arr = dicom.pixel_array.astype(np.float32)  # Ensure float for processing, original was uint16
+                arr = apply_voi_lut(dicom.pixel_array, dicom) # hopefully staty uint16
                 
                 # Fixed variable name bug: was 'data', should be 'arr'
                 if dicom.PhotometricInterpretation == "MONOCHROME1":
@@ -106,7 +107,7 @@ class DataPreprocessor:
                 # Alternative implementation using dicomsdl (commented out)
                 self.logger.warning("Non-VOI LUT processing not fully implemented")
                 dicom = pydicom.dcmread(path)
-                arr = dicom.pixel_array.astype(np.float32)
+                # arr = dicom.pixel_array.astype(np.float32)
                 
                 if dicom.PhotometricInterpretation == "MONOCHROME1":
                     arr = arr.max() - arr
@@ -190,9 +191,7 @@ class DataPreprocessor:
         resized = cv2.resize(arr, self.resize_to, interpolation=cv2.INTER_AREA)
         return resized
     
-    # document said int8
-    # def apply_nlm_denoising_float(arr: np.ndarray) -> np.ndarray:
-    def apply_nlm_denoising_uint16(arr_uint16: np.ndarray, h: float = 10.0, template_window_size: int = 7, search_window_size: int = 21) -> np.ndarray:
+    def apply_nlm_denoising(self, arr_uint16: np.ndarray, h: float = 10.0, template_window_size: int = 7, search_window_size: int = 21) -> np.ndarray:
         """        
         Apply Non-Local Means denoising on float32 array.
 
@@ -208,17 +207,16 @@ class DataPreprocessor:
         
         denoised = cv2.fastNlMeansDenoising(
             src=arr_uint16,
-            h=h,
+            h=[h],
             templateWindowSize=template_window_size,
             searchWindowSize=search_window_size,
             normType=cv2.NORM_L1
+            # normType = 1
         )
 
         return denoised
 
-    
-    # said to need fixed
-    def apply_clahe_float(arr_uint16 : np.ndarray, clip_limit : float = 2.0, tile_grid_size : Tuple[int, int] = (8,8)) -> np.ndarray:
+    def apply_clahe(self, arr_uint16 : np.ndarray, clip_limit : float = 4.5, tile_grid_size : Tuple[int, int] = (8,8)) -> np.ndarray:
         """        
         Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) on uint16 array.
 
@@ -230,6 +228,8 @@ class DataPreprocessor:
         Returns:
             CLAHE processed array in uint16 format    
         """
+        print(arr_uint16.dtype, arr_uint16.shape, arr_uint16.ndim)
+
         
         # Apply CLAHE
         clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
@@ -237,7 +237,18 @@ class DataPreprocessor:
         
         return clahe_uint16
     
-    def apply_bilateral_filter_float(arr : np.ndarray, d : int = 9, sigma_color : int = 75, sigma_space : int = 75) -> np.ndarray:
+        # arr_uint8 = (arr_uint16 / arr_uint16.max() * 255).astype(np.uint8)
+
+        # # Apply CLAHE
+        # clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        # clahe_uint8 = clahe.apply(arr_uint8)
+
+        # # Convert back to uint16, scaling up
+        # clahe_uint16 = (clahe_uint8.astype(np.float32) / 255 * arr_uint16.max()).astype(np.uint16)
+
+        # return clahe_uint16
+    
+    def apply_bilateral_filter(self, arr : np.ndarray, d : int = 9, sigma_color : int = 75, sigma_space : int = 75) -> np.ndarray:
         """        
         Apply bilateral filter on float32 array.
         
@@ -270,18 +281,23 @@ class DataPreprocessor:
         Apply image enhancement techniques while preserving float precision.
         """
         enhanced = arr.copy()
+
+        # Ensure array is in proper format for cv2
+        if enhanced.dtype != np.uint16:
+            print("Oiiiii")
+            enhanced = enhanced.astype(np.uint16)
+
+        if apply_clahe:
+            self.logger.debug("Applying CLAHE...")
+            enhanced = self.apply_clahe(enhanced)
         
         if apply_nlm:
             self.logger.debug("Applying NL-means denoising...")
-            enhanced = self.apply_nlm_denoising_float(enhanced)
-        
-        if apply_clahe:
-            self.logger.debug("Applying CLAHE...")
-            enhanced = self.apply_clahe_float(enhanced)
+            enhanced = self.apply_nlm_denoising(enhanced)
         
         if apply_bilateral:
             self.logger.debug("Applying bilateral filter...")
-            enhanced = self.apply_bilateral_filter_float(enhanced)
+            enhanced = self.apply_bilateral_filter(enhanced)
         
         return enhanced
 
