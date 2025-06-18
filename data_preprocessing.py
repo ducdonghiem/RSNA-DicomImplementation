@@ -96,7 +96,7 @@ class DataPreprocessor:
         try:
             if self.apply_voilut:
                 dicom = pydicom.dcmread(path)
-                arr = dicom.pixel_array.astype(np.float64)  # Ensure float for processing
+                arr = dicom.pixel_array.astype(np.float32)  # Ensure float for processing, original was uint16
                 arr = apply_voi_lut(arr, dicom)
                 
                 # Fixed variable name bug: was 'data', should be 'arr'
@@ -106,7 +106,7 @@ class DataPreprocessor:
                 # Alternative implementation using dicomsdl (commented out)
                 self.logger.warning("Non-VOI LUT processing not fully implemented")
                 dicom = pydicom.dcmread(path)
-                arr = dicom.pixel_array.astype(np.float64)
+                arr = dicom.pixel_array.astype(np.float32)
                 
                 if dicom.PhotometricInterpretation == "MONOCHROME1":
                     arr = arr.max() - arr
@@ -189,6 +189,50 @@ class DataPreprocessor:
             
         resized = cv2.resize(arr, self.resize_to, interpolation=cv2.INTER_AREA)
         return resized
+    
+    # document said int8
+    def apply_nlm_denoising_float(arr: np.ndarray) -> np.ndarray:
+        """        
+        Apply Non-Local Means denoising on float32 array.
+
+        Args:
+            arr: Input array
+
+        Returns:
+            Denoised array
+        """
+        # Ensure float32 format
+        arr_float32 = arr.astype(np.float32)
+        
+        # Apply NL means denoising on float data
+        denoised = cv2.fastNlMeansDenoising(
+            arr_float32, 
+            None, 
+            h=0.1,          # Lower h for float data (typically 0.05-0.2)
+            templateWindowSize=7,
+            searchWindowSize=21
+        )
+        return denoised
+    
+    # said to need fixed
+    def apply_clahe_float(arr_uint16: np.ndarray, clip_limit : float = 2.0, tile_grid_size : Tuple[int, int] = (8,8)) -> np.ndarray:
+        """        
+        Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) on uint16 array.
+
+        Args:
+            arr_uint16: Input array in uint16 format
+            clip_limit: Contrast limit for CLAHE
+            tile_grid_size: Size of grid for CLAHE
+
+        Returns:
+            CLAHE processed array in uint16 format    
+        """
+        
+        # Apply CLAHE
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        clahe_uint16 = clahe.apply(arr_uint16)
+        
+        return clahe_uint16
 
     def attach_patch_method(self):
         """Placeholder for attaching patch logic"""
