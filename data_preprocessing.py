@@ -12,7 +12,7 @@ from scipy.ndimage import label, find_objects
 
 class DataPreprocessor:
     def __init__(self, data_path: str, output_path: str, resize_to: Tuple[int, int] = (512, 512), 
-                 crop: bool = True, apply_voilut: bool = True, stretch: bool = False, attach_patch: bool = False):
+                 crop: bool = True, apply_voilut: bool = True, stretch: bool = True, attach_patch: bool = False):
         """
         Initialize DataPreprocessor for DICOM files.
         
@@ -71,7 +71,8 @@ class DataPreprocessor:
         logger.addHandler(console_handler)
         
         # File handler - logs to file in output directory
-        log_file = self.output_path / 'preprocessing.log'
+        # log_file = self.output_path / 'preprocessing.log'
+        log_file = '../preprocessing_all.log'
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.DEBUG)  # More detailed logs in file
         file_handler.setFormatter(formatter)
@@ -311,7 +312,7 @@ class DataPreprocessor:
         """
         self.logger.debug(f"Resizing array from {arr.shape} to {self.resize_to}")
 
-        if (self.stretch):
+        if (not self.stretch):
             # Step 1: Pad to square
             h, w = arr.shape
             diff = abs(h - w)
@@ -387,7 +388,7 @@ class DataPreprocessor:
         Returns:
             CLAHE processed array in uint16 format    
         """
-        print(arr_uint16.dtype, arr_uint16.shape, arr_uint16.ndim)
+        # print(arr_uint16.dtype, arr_uint16.shape, arr_uint16.ndim)
 
         
         # Apply CLAHE
@@ -457,7 +458,7 @@ class DataPreprocessor:
 
         # Ensure array is in proper format for cv2
         if arr.dtype != np.uint16:
-            print("Oiiiii")
+            # print("Oiiiii")
             arr = arr.astype(np.uint16)
 
         if apply_clahe:
