@@ -26,7 +26,8 @@ class ModelFactory:
             else:
                 model = torchvision.models.resnet50(weights=None)
             model.fc = nn.Linear(model.fc.in_features, num_classes)
-            
+        
+        # slowest and need strong pre training
         elif model_name == 'vit':
             if pretrained:
                 model = torchvision.models.vit_b_16(weights='IMAGENET1K_V1')
