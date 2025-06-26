@@ -1,0 +1,479 @@
+from typing import Dict, List, Tuple, Optional, Union
+import os
+import json
+import logging
+import numpy as np
+import pandas as pd
+import torch
+from torch import nn, optim
+from torch.utils.data import DataLoader
+from sklearn.model_selection import train_test_split, KFold
+import albumentations as A
+import albumentations.pytorch as AP
+from tqdm import tqdm
+from BreastCancerDataset import BreastCancerDataset
+from ModelFactory import ModelFactory
+from MetricsCalculator import MetricsCalculator
+
+class BreastCancerTrainer:
+    """Main trainer class for breast cancer detection models."""
+    
+    def __init__(self, 
+                 config: Dict,
+                 device: Optional[str] = None):
+        """
+        Initialize the trainer.
+        
+        Args:
+            config: Configuration dictionary
+            device: Device to use ('cuda', 'cpu', or None for auto-detection)
+        """
+        self.config = config
+        self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Setup logging
+        self._setup_logging()
+        
+        # Initialize model
+        self.model = ModelFactory.create_model(
+            config['model_name'], 
+            num_classes=config.get('num_classes', 2),
+            pretrained=config.get('pretrained', True)
+        )
+        self.model.to(self.device)
+        
+        # Initialize transforms
+        self.train_transform = self._get_train_transforms()
+        self.val_transform = self._get_val_transforms()
+        
+        # Training history
+        self.history = {
+            'train_loss': [],
+            'val_loss': [],
+            'train_metrics': [],
+            'val_metrics': []
+        }
+        
+        self.logger.info(f"Trainer initialized with model: {config['model_name']}")
+        self.logger.info(f"Device: {self.device}")
+    
+    def _setup_logging(self):
+        """Setup logging configuration."""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+    
+    def _get_train_transforms(self) -> A.Compose:
+        """Get training transforms."""
+        return A.Compose([
+            A.Resize(256, 256),
+            A.RandomCrop(224, 224),
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.RandomBrightnessContrast(p=0.2, brightness_limit=0.1, contrast_limit=0.1),
+            A.OneOf([
+                A.Blur(blur_limit=3, p=0.5),
+                A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+            ], p=0.2),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # imagenet stats
+            AP.ToTensorV2()
+        ])
+    
+    def _get_val_transforms(self) -> A.Compose:
+        """Get validation transforms."""
+        return A.Compose([
+            A.Resize(256, 256),
+            A.CenterCrop(224, 224),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            AP.ToTensorV2()
+        ])
+    
+    def prepare_data(self, csv_path: str, data_root: str, test_size: float = 0.2) -> Tuple[DataLoader, DataLoader]:
+        """
+        Prepare train and test data loaders.
+        
+        Args:
+            csv_path: Path to CSV file
+            data_root: Root directory for data
+            test_size: Fraction of data to use for testing
+            
+        Returns:
+            train_loader, test_loader
+        """
+        # Load and split data
+        df = pd.read_csv(csv_path)
+        
+        # Stratified split to maintain class balance
+        train_df, test_df = train_test_split(
+            df, 
+            test_size=test_size, 
+            stratify=df[self.config.get('target_col', 'cancer')],
+            random_state=42     # like set.seed
+        )
+        
+        # Save splits for reproducibility
+        os.makedirs(self.config.get('output_dir', 'outputs'), exist_ok=True)
+        train_df.to_csv(os.path.join(self.config.get('output_dir', 'outputs'), 'train_split.csv'), index=False)
+        test_df.to_csv(os.path.join(self.config.get('output_dir', 'outputs'), 'test_split.csv'), index=False)
+        
+        # Create datasets
+        train_dataset = BreastCancerDataset(
+            csv_path=os.path.join(self.config.get('output_dir', 'outputs'), 'train_split.csv'),
+            data_root=data_root,
+            transform=self.train_transform,
+            target_col=self.config.get('target_col', 'cancer')
+        )
+        
+        test_dataset = BreastCancerDataset(
+            csv_path=os.path.join(self.config.get('output_dir', 'outputs'), 'test_split.csv'),
+            data_root=data_root,
+            transform=self.val_transform,
+            target_col=self.config.get('target_col', 'cancer')
+        )
+        
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.config.get('batch_size', 32),
+            shuffle=True,
+            num_workers=self.config.get('num_workers', 4),
+            pin_memory=True if self.device == 'cuda' else False
+        )
+        
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.config.get('batch_size', 32),
+            shuffle=False,
+            num_workers=self.config.get('num_workers', 4),
+            pin_memory=True if self.device == 'cuda' else False
+        )
+        
+        self.logger.info(f"Training samples: {len(train_dataset)}")
+        self.logger.info(f"Test samples: {len(test_dataset)}")
+        
+        return train_loader, test_loader
+    
+    def train_epoch(self, model: nn.Module, train_loader: DataLoader, 
+                   optimizer: optim.Optimizer, criterion: nn.Module, 
+                   epoch: int) -> Tuple[float, Dict[str, float]]:
+        """Train for one epoch."""
+        model.train()
+        total_loss = 0.0
+        all_preds = []
+        all_targets = []
+        all_probs = []
+        
+        pbar = tqdm(train_loader, desc=f'Epoch {epoch+1} [Train]')
+        for batch_idx, (images, targets, metadata) in enumerate(pbar):
+            images, targets = images.to(self.device), targets.to(self.device)
+            
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            
+            # Get predictions
+            probs = torch.softmax(outputs, dim=1)
+            preds = torch.argmax(outputs, dim=1)
+            
+            all_preds.extend(preds.cpu().numpy())
+            all_targets.extend(targets.cpu().numpy())
+            all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of positive class
+            
+            # Update progress bar
+            pbar.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'avg_loss': f'{total_loss/(batch_idx+1):.4f}'
+            })
+        
+        avg_loss = total_loss / len(train_loader)
+        metrics = MetricsCalculator.calculate_metrics(all_targets, all_preds, all_probs)
+        
+        return avg_loss, metrics
+    
+    def validate_epoch(self, model: nn.Module, val_loader: DataLoader, 
+                      criterion: nn.Module, epoch: int) -> Tuple[float, Dict[str, float]]:
+        """Validate for one epoch."""
+        model.eval()
+        total_loss = 0.0
+        all_preds = []
+        all_targets = []
+        all_probs = []
+        
+        with torch.no_grad():
+            pbar = tqdm(val_loader, desc=f'Epoch {epoch+1} [Val]')
+            for batch_idx, (images, targets, metadata) in enumerate(pbar):
+                images, targets = images.to(self.device), targets.to(self.device)
+                
+                outputs = model(images)
+                loss = criterion(outputs, targets)
+                
+                total_loss += loss.item()
+                
+                # Get predictions
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(outputs, dim=1)
+                
+                all_preds.extend(preds.cpu().numpy())
+                all_targets.extend(targets.cpu().numpy())
+                all_probs.extend(probs[:, 1].cpu().numpy())
+                
+                # Update progress bar
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'avg_loss': f'{total_loss/(batch_idx+1):.4f}'
+                })
+        
+        avg_loss = total_loss / len(val_loader)
+        metrics = MetricsCalculator.calculate_metrics(all_targets, all_preds, all_probs)
+        
+        return avg_loss, metrics
+    
+    def train_with_kfold(self, csv_path: str, data_root: str, k_folds: int = 5) -> Dict[str, List[float]]:
+        """
+        Train model using K-fold cross validation.
+        
+        Args:
+            csv_path: Path to CSV file
+            data_root: Root directory for data
+            k_folds: Number of folds for cross validation
+            
+        Returns:
+            Dictionary with metrics for each fold
+        """
+        # Load data
+        df = pd.read_csv(csv_path)
+        
+        # Split into train/test first
+        train_df, test_df = train_test_split(
+            df, 
+            test_size=0.2, 
+            stratify=df[self.config.get('target_col', 'cancer')],
+            random_state=42
+        )
+        
+        # K-fold cross validation on training data
+        kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+        fold_results = {
+            'fold': [],
+            'val_balanced_accuracy': [],
+            'val_f1_score': [],
+            'val_auc_roc': [],
+            'val_recall': [],
+            'val_precision': []
+        }
+        
+        for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df)):
+            self.logger.info(f"Starting Fold {fold + 1}/{k_folds}")
+            
+            # Create fold datasets
+            fold_train_df = train_df.iloc[train_idx].reset_index(drop=True)
+            fold_val_df = train_df.iloc[val_idx].reset_index(drop=True)
+            
+            # Save fold splits
+            fold_train_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold+1}_train.csv')
+            fold_val_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold+1}_val.csv')
+            fold_train_df.to_csv(fold_train_path, index=False)
+            fold_val_df.to_csv(fold_val_path, index=False)
+            
+            # Create datasets and loaders
+            fold_train_dataset = BreastCancerDataset(fold_train_path, data_root, self.train_transform)
+            fold_val_dataset = BreastCancerDataset(fold_val_path, data_root, self.val_transform)
+            
+            fold_train_loader = DataLoader(
+                fold_train_dataset, 
+                batch_size=self.config.get('batch_size', 32),
+                shuffle=True, 
+                num_workers=self.config.get('num_workers', 4)
+            )
+            fold_val_loader = DataLoader(
+                fold_val_dataset, 
+                batch_size=self.config.get('batch_size', 32),
+                shuffle=False, 
+                num_workers=self.config.get('num_workers', 4)
+            )
+            
+            # Reinitialize model for each fold
+            self.model = ModelFactory.create_model(
+                self.config['model_name'], 
+                num_classes=self.config.get('num_classes', 2),
+                pretrained=self.config.get('pretrained', True)
+            )
+            self.model.to(self.device)
+            
+            # Train fold
+            best_val_metrics = self._train_fold(fold_train_loader, fold_val_loader, fold + 1)
+            
+            # Store results
+            fold_results['fold'].append(fold + 1)
+            fold_results['val_balanced_accuracy'].append(best_val_metrics['balanced_accuracy'])
+            fold_results['val_f1_score'].append(best_val_metrics['f1_score'])
+            fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
+            fold_results['val_recall'].append(best_val_metrics['recall'])
+            fold_results['val_precision'].append(best_val_metrics['precision'])
+        
+        # Print fold results
+        self._print_fold_results(fold_results)
+        
+        # Final evaluation on test set
+        self._final_test_evaluation(test_df, data_root)
+        
+        return fold_results
+    
+    def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int) -> Dict[str, float]:
+        """Train a single fold."""
+        # Setup optimizer and scheduler
+        optimizer = optim.Adam(
+            self.model.parameters(), 
+            lr=self.config.get('learning_rate', 1e-4),
+            weight_decay=self.config.get('weight_decay', 1e-4)
+        )
+        
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='max', 
+            factor=0.5, 
+            patience=5, 
+            verbose=True
+        )
+        
+        # Setup loss function
+        criterion = nn.CrossEntropyLoss()
+        
+        # Training loop
+        best_val_metrics = None
+        best_val_score = 0
+        patience_counter = 0
+        max_patience = self.config.get('patience', 10)
+        
+        for epoch in range(self.config.get('epochs', 50)):
+            # Train
+            train_loss, train_metrics = self.train_epoch(
+                self.model, train_loader, optimizer, criterion, epoch
+            )
+            
+            # Validate
+            val_loss, val_metrics = self.validate_epoch(
+                self.model, val_loader, criterion, epoch
+            )
+            
+            # Update scheduler
+            scheduler.step(val_metrics['balanced_accuracy'])
+            
+            # Check for improvement
+            val_score = val_metrics['balanced_accuracy']
+            if val_score > best_val_score:
+                best_val_score = val_score
+                best_val_metrics = val_metrics.copy()
+                patience_counter = 0
+                
+                # Save best model
+                model_path = os.path.join(
+                    self.config.get('output_dir', 'outputs'), 
+                    f'best_model_fold_{fold}.pth'
+                )
+                torch.save(self.model.state_dict(), model_path)
+            else:
+                patience_counter += 1
+            
+            # Log progress
+            self.logger.info(
+                f'Fold {fold} Epoch {epoch+1}: '
+                f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, '
+                f'Val Balanced Acc: {val_metrics["balanced_accuracy"]:.4f}, '
+                f'Val F1: {val_metrics["f1_score"]:.4f}, '
+                f'Val Recall: {val_metrics["recall"]:.4f}, '
+                f'Val F1: {val_metrics["precision"]:.4f}'
+            )
+            
+            # Early stopping
+            if patience_counter >= max_patience:
+                self.logger.info(f'Early stopping triggered at epoch {epoch+1}')
+                break
+        
+        return best_val_metrics
+    
+    def _print_fold_results(self, fold_results: Dict[str, List[float]]):
+        """Print summary of fold results."""
+        self.logger.info("\n" + "="*50)
+        self.logger.info("K-FOLD CROSS VALIDATION RESULTS")
+        self.logger.info("="*50)
+        
+        for i, fold in enumerate(fold_results['fold']):
+            self.logger.info(
+                f"Fold {fold}: "
+                f"Balanced Acc: {fold_results['val_balanced_accuracy'][i]:.4f}, "
+                f"F1: {fold_results['val_f1_score'][i]:.4f}, "
+                f"AUC-ROC: {fold_results['val_auc_roc'][i]:.4f}"
+            )
+        
+        # Calculate means and stds
+        mean_acc = np.mean(fold_results['val_balanced_accuracy'])
+        std_acc = np.std(fold_results['val_balanced_accuracy'])
+        mean_f1 = np.mean(fold_results['val_f1_score'])
+        std_f1 = np.std(fold_results['val_f1_score'])
+        mean_auc = np.mean(fold_results['val_auc_roc'])
+        std_auc = np.std(fold_results['val_auc_roc'])
+        
+        self.logger.info("-" * 50)
+        self.logger.info(f"Mean Balanced Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
+        self.logger.info(f"Mean F1 Score: {mean_f1:.4f} ± {std_f1:.4f}")
+        self.logger.info(f"Mean AUC-ROC: {mean_auc:.4f} ± {std_auc:.4f}")
+        self.logger.info("="*50)
+    
+    def _final_test_evaluation(self, test_df: pd.DataFrame, data_root: str):
+        """Evaluate on final test set."""
+        self.logger.info("\nFinal Test Set Evaluation")
+        self.logger.info("-" * 30)
+        
+        # Save test split
+        test_path = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_split.csv')
+        test_df.to_csv(test_path, index=False)
+        
+        # Create test dataset
+        test_dataset = BreastCancerDataset(test_path, data_root, self.val_transform)
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.config.get('batch_size', 32),
+            shuffle=False, 
+            num_workers=self.config.get('num_workers', 4)
+        )
+        
+        # Load best model from last fold (or you could ensemble)
+        best_model_path = os.path.join(
+            self.config.get('output_dir', 'outputs'), 
+            f'best_model_fold_{self.config.get("k_folds", 5)}.pth'
+        )
+        
+        if os.path.exists(best_model_path):
+            self.model.load_state_dict(torch.load(best_model_path))
+            self.logger.info(f"Loaded best model from {best_model_path}")
+        
+        # Evaluate
+        criterion = nn.CrossEntropyLoss()
+        test_loss, test_metrics = self.validate_epoch(self.model, test_loader, criterion, 0)
+        
+        self.logger.info(f"Test Loss: {test_loss:.4f}")
+        self.logger.info(f"Test Balanced Accuracy: {test_metrics['balanced_accuracy']:.4f}")
+        self.logger.info(f"Test F1 Score: {test_metrics['f1_score']:.4f}")
+        self.logger.info(f"Test AUC-ROC: {test_metrics.get('auc_roc', 0.0):.4f}")
+        self.logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
+        self.logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
+        
+        # Save test results
+        results = {
+            'test_loss': test_loss,
+            'test_metrics': test_metrics,
+            'config': self.config
+        }
+        
+        results_path = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_results.json')
+        with open(results_path, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        self.logger.info(f"Results saved to {results_path}")
