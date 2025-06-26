@@ -12,6 +12,8 @@ class MetricsCalculator:
             'accuracy': sum(a == b for a, b in zip(y_true, y_pred)) / len(y_true),
             'balanced_accuracy': MetricsCalculator._balanced_accuracy_score(y_true, y_pred),
             'f1_score': MetricsCalculator._f1_score(y_true, y_pred),
+            'recall': MetricsCalculator._recall(y_true, y_pred),
+            'precision': MetricsCalculator._precision(y_true, y_pred),
         }
         
         if y_prob is not None:
@@ -34,14 +36,21 @@ class MetricsCalculator:
     
     def _f1_score(y_true: List[int], y_pred: List[int]) -> float:
         """Calculate F1 score."""
-        TP = sum(1 for a, b in zip(y_true, y_pred) if a == b == 1)
-        FP = sum(1 for a, b in zip(y_true, y_pred) if a == 0 and b == 1)
-        FN = sum(1 for a, b in zip(y_true, y_pred) if a == 1 and b == 0)
-        
-        if TP + FP + FN == 0:
-            return 0.0
-        
-        precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-        recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+        precision = MetricsCalculator._precision(y_true, y_pred)
+        recall = MetricsCalculator._recall(y_true, y_pred)
         
         return 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    def _recall(y_true: List[int], y_pred: List[int]) -> float:
+        """Calculate recall."""
+        TP = sum(1 for a, b in zip(y_true, y_pred) if a == b == 1)
+        FN = sum(1 for a, b in zip(y_true, y_pred) if a == 1 and b == 0)
+        
+        return TP / (TP + FN) if (TP + FN) > 0 else 0.0
+    
+    def _precision(y_true: List[int], y_pred: List[int]) -> float:
+        """Calculate precision."""
+        TP = sum(1 for a, b in zip(y_true, y_pred) if a == b == 1)
+        FP = sum(1 for a, b in zip(y_true, y_pred) if a == 0 and b == 1)
+        
+        return TP / (TP + FP) if (TP + FP) > 0 else 0.0
