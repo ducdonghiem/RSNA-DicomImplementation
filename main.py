@@ -1,4 +1,4 @@
-from data_preprocessing import DataPreprocessor
+from DataPreprocessor import DataPreprocessor
 
 # Initialize preprocessor
 preprocessor = DataPreprocessor(
