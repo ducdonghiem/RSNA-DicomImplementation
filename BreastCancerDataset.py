@@ -35,7 +35,7 @@ class BreastCancerDataset(Dataset):
         """Validate that data files exist."""
         missing_files = []
         for idx, row in self.df.iterrows():
-            file_path = self._get_file_path(row['patient_id'], row['scan_id'])
+            file_path = self._get_file_path(row['patient_id'], row['image_id'])
             if not os.path.exists(file_path):
                 missing_files.append(file_path)
         
@@ -61,7 +61,7 @@ class BreastCancerDataset(Dataset):
             metadata: Dictionary with scan_id, patient_id
         """
         row = self.df.iloc[idx]
-        scan_id = row['scan_id']
+        scan_id = row['image_id']
         patient_id = row['patient_id']
         target = int(row[self.target_col])
         
@@ -73,17 +73,24 @@ class BreastCancerDataset(Dataset):
             # Ensure image is in correct format
             if image.dtype != np.float32:
                 image = image.astype(np.float32)
+
+            # if isinstance(image, torch.Tensor):
+            #     # print("WTFFF")
+            #     image = image.numpy()
             
             # Optional: if needed by the transform
             if image.ndim == 2:
                 image = np.expand_dims(image, axis=-1)  # Make shape [H, W, 1]
 
+            # print("Type before transform:", type(image))
+
             if self.transform:
                 transformed = self.transform(image=image)
                 image = transformed['image']  # Albumentations returns dict
 
-            # Convert to tensor for model
-            image = torch.from_numpy(image).permute(2, 0, 1).float()  # [C, H, W]
+            else:
+                # Convert to tensor only if no transform is applied
+                image = torch.from_numpy(image).permute(2, 0, 1).float()
                 
             # Ensure 3 channels for pretrained models
             if image.shape[0] == 1:

@@ -1,0 +1,5 @@
+use this python env:
+/home/student/dod2/Documents/URA25/LLM_Quantization/Task1-Llama7b_extract/myenv/bin/python
+
+if u use myenv and have all the required libs installed (where python returns the correct path) but still see cannot be resolved error, 
+it is because of the IDE is still using the wrong python. Change the python interpreter and here u go.

@@ -75,7 +75,8 @@ class BreastCancerTrainer:
             A.RandomBrightnessContrast(p=0.2, brightness_limit=0.1, contrast_limit=0.1),
             A.OneOf([
                 A.Blur(blur_limit=3, p=0.5),
-                A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                # A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                A.GaussNoise(std_range=(0.2, 0.44), mean_range=(0, 0), p=0.5),
             ], p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # imagenet stats
             AP.ToTensorV2()
@@ -183,7 +184,8 @@ class BreastCancerTrainer:
             
             all_preds.extend(preds.cpu().numpy())
             all_targets.extend(targets.cpu().numpy())
-            all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of positive class
+            # all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of positive class
+            all_probs.extend(probs[:, 1].detach().cpu().numpy())
             
             # Update progress bar
             pbar.set_postfix({
@@ -338,8 +340,8 @@ class BreastCancerTrainer:
             optimizer, 
             mode='max', 
             factor=0.5, 
-            patience=5, 
-            verbose=True
+            patience=5,
+            # verbose=True
         )
         
         # Setup loss function

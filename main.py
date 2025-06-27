@@ -8,7 +8,7 @@
 #     data_path = "../../RSNABreastCancerDetection/data/rsna-breast-cancer-detection/train_images",
     # output_path="../processed_data", 
 #     output_path="../../processed_data", 
-    resize_to=(512, 512),
+    # resize_to=(512, 512),
 #     crop=True,
 #     apply_voilut=True,
 #     stretch=True
@@ -29,23 +29,23 @@ def main():
     """Main function to run training."""
     # Configuration
     config = {
-        'model_name': 'resnet50',  # or 'vit_b_16'
+        'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50'
         'num_classes': 2,
         'pretrained': True,
         'batch_size': 32,
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
-        'epochs': 50,
+        'epochs': 30,
         'patience': 10,
         'num_workers': 4,
         'k_folds': 5,
         'target_col': 'cancer',
-        'output_dir': 'outputs'
+        'output_dir': '../outputs'
     }
     
     # Paths (adjust these to your data)
-    csv_path = 'train.csv'  # Your CSV file with scan_id, patient_id, cancer columns
-    data_root = 'data'      # Root directory containing patient folders with .npy files
+    csv_path = '../../train.csv'  # Your CSV file with scan_id, patient_id, cancer columns
+    data_root = '../../processed_data'      # Root directory containing patient folders with .npy files
     
     # Create trainer
     trainer = BreastCancerTrainer(config)
