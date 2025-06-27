@@ -15,6 +15,9 @@ from BreastCancerDataset import BreastCancerDataset
 from ModelFactory import ModelFactory
 from MetricsCalculator import MetricsCalculator
 
+from sklearn.model_selection import StratifiedKFold
+from sklearn.utils.class_weight import compute_class_weight
+
 class BreastCancerTrainer:
     """Main trainer class for breast cancer detection models."""
     
@@ -71,12 +74,13 @@ class BreastCancerTrainer:
             A.Resize(256, 256),
             A.RandomCrop(224, 224),
             A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.2, brightness_limit=0.1, contrast_limit=0.1),
+            # A.VerticalFlip(p=0.5),
+            # A.RandomBrightnessContrast(p=0.2, brightness_limit=0.1, contrast_limit=0.1),
             A.OneOf([
                 A.Blur(blur_limit=3, p=0.5),
                 # A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
-                A.GaussNoise(std_range=(0.2, 0.44), mean_range=(0, 0), p=0.5),
+                # A.GaussNoise(std_range=(0.2, 0.44), mean_range=(0, 0), p=0.5),
+                A.GaussNoise(std_range=(0.02, 0.08), mean=0, p=0.5)
             ], p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # imagenet stats
             AP.ToTensorV2()
@@ -91,6 +95,7 @@ class BreastCancerTrainer:
             AP.ToTensorV2()
         ])
     
+    # useless for now
     def prepare_data(self, csv_path: str, data_root: str, test_size: float = 0.2) -> Tuple[DataLoader, DataLoader]:
         """
         Prepare train and test data loaders.
@@ -198,6 +203,7 @@ class BreastCancerTrainer:
         
         return avg_loss, metrics
     
+    # appends results from a batch (32 scans) to the full list then compute the metrics after the loop (inference one batch at a time to save memory)
     def validate_epoch(self, model: nn.Module, val_loader: DataLoader, 
                       criterion: nn.Module, epoch: int) -> Tuple[float, Dict[str, float]]:
         """Validate for one epoch."""
@@ -260,17 +266,32 @@ class BreastCancerTrainer:
         )
         
         # K-fold cross validation on training data
-        kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+        # kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+        kfold = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=42)
+
+        # fold_results['fold'].append(fold + 1)
+        #     fold_results['val_accuracy'].append(best_val_metrics['accuracy'])
+        #     fold_results['val_balanced_accuracy'].append(best_val_metrics['balanced_accuracy'])
+        #     fold_results['val_pF1'].append(best_val_metrics['pF1'])
+        #     fold_results['val_macroF1'].append(best_val_metrics['macroF1'])
+        #     fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
+        #     fold_results['val_recall'].append(best_val_metrics['recall'])
+        #     fold_results['val_precision'].append(best_val_metrics['precision'])
+
         fold_results = {
             'fold': [],
+            'val_accuracy': [],
             'val_balanced_accuracy': [],
-            'val_f1_score': [],
+            'val_pF1': [],
+            'val_macroF1': [],
             'val_auc_roc': [],
             'val_recall': [],
             'val_precision': []
         }
         
-        for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df)):
+        # for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df)):
+        for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df, train_df[self.config['target_col']])):        # for balance between folds
+
             self.logger.info(f"Starting Fold {fold + 1}/{k_folds}")
             
             # Create fold datasets
@@ -313,8 +334,10 @@ class BreastCancerTrainer:
             
             # Store results
             fold_results['fold'].append(fold + 1)
+            fold_results['val_accuracy'].append(best_val_metrics['accuracy'])
             fold_results['val_balanced_accuracy'].append(best_val_metrics['balanced_accuracy'])
-            fold_results['val_f1_score'].append(best_val_metrics['f1_score'])
+            fold_results['val_pF1'].append(best_val_metrics['pF1'])
+            fold_results['val_macroF1'].append(best_val_metrics['macroF1'])
             fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
             fold_results['val_recall'].append(best_val_metrics['recall'])
             fold_results['val_precision'].append(best_val_metrics['precision'])
@@ -329,6 +352,11 @@ class BreastCancerTrainer:
     
     def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int) -> Dict[str, float]:
         """Train a single fold."""
+        # === 1. Compute class weights ===
+        targets = [label for _, label, _ in train_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
+        class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
+        weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
+
         # Setup optimizer and scheduler
         optimizer = optim.Adam(
             self.model.parameters(), 
@@ -345,7 +373,7 @@ class BreastCancerTrainer:
         )
         
         # Setup loss function
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=weight_tensor)   #  handle class imbalance by using class weights in the loss function to penalize the model more for misclassifying the minority class (cancer).
         
         # Training loop
         best_val_metrics = None
@@ -387,10 +415,20 @@ class BreastCancerTrainer:
             self.logger.info(
                 f'Fold {fold} Epoch {epoch+1}: '
                 f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, '
+                f'Train Acc: {train_metrics["accuracy"]:.4f}, '
+                f'Train Balanced Acc: {train_metrics["balanced_accuracy"]:.4f}, '
+                f'Train pF1: {train_metrics["pF1"]:.4f}, '
+                f'Train MacroF1: {train_metrics["macroF1"]:.4f}, '
+                f'Train AUC: {train_metrics.get('auc_roc', 0.0):.4f}, '
+                f'Train Recall: {train_metrics["recall"]:.4f}, '
+                f'Train Precision: {train_metrics["precision"]:.4f}'
+                f'Val Acc: {val_metrics["accuracy"]:.4f}, '
                 f'Val Balanced Acc: {val_metrics["balanced_accuracy"]:.4f}, '
-                f'Val F1: {val_metrics["f1_score"]:.4f}, '
+                f'Val pF1: {val_metrics["pF1"]:.4f}, '
+                f'Val MacroF1: {val_metrics["macroF1"]:.4f}, '
+                f'Val AUC: {val_metrics.get('auc_roc', 0.0):.4f}, '
                 f'Val Recall: {val_metrics["recall"]:.4f}, '
-                f'Val F1: {val_metrics["precision"]:.4f}'
+                f'Val Precision: {val_metrics["precision"]:.4f}'
             )
             
             # Early stopping
@@ -409,23 +447,40 @@ class BreastCancerTrainer:
         for i, fold in enumerate(fold_results['fold']):
             self.logger.info(
                 f"Fold {fold}: "
+                f"Acc: {fold_results['val_accuracy'][i]:.4f}, "
                 f"Balanced Acc: {fold_results['val_balanced_accuracy'][i]:.4f}, "
-                f"F1: {fold_results['val_f1_score'][i]:.4f}, "
-                f"AUC-ROC: {fold_results['val_auc_roc'][i]:.4f}"
+                f"pF1: {fold_results['val_pF1'][i]:.4f}, "
+                f"MacroF1: {fold_results['val_macroF1'][i]:.4f}, "
+                f"AUC-ROC: {fold_results['val_auc_roc'][i]:.4f}, "
+                f"Recall: {fold_results['val_recall'][i]:.4f}, "
+                f"Precision: {fold_results['val_precision'][i]:.4f}"
             )
         
         # Calculate means and stds
-        mean_acc = np.mean(fold_results['val_balanced_accuracy'])
-        std_acc = np.std(fold_results['val_balanced_accuracy'])
-        mean_f1 = np.mean(fold_results['val_f1_score'])
-        std_f1 = np.std(fold_results['val_f1_score'])
+        mean_acc = np.mean(fold_results['val_accuracy'])
+        std_acc = np.std(fold_results['val_accuracy'])
+        mean_bal_acc = np.mean(fold_results['val_balanced_accuracy'])
+        std_bal_acc = np.std(fold_results['val_balanced_accuracy'])
+        mean_pf1 = np.mean(fold_results['val_pF1'])
+        std_pf1 = np.std(fold_results['val_pF1'])
+        mean_macro_f1 = np.mean(fold_results['val_macroF1'])
+        std_macro_f1 = np.std(fold_results['val_macroF1'])
         mean_auc = np.mean(fold_results['val_auc_roc'])
         std_auc = np.std(fold_results['val_auc_roc'])
+        mean_recall = np.mean(fold_results['val_recall'])
+        std_recall = np.std(fold_results['val_recall'])
+        mean_precision = np.mean(fold_results['val_precision'])
+        std_precision = np.std(fold_results['val_precision'])
         
         self.logger.info("-" * 50)
-        self.logger.info(f"Mean Balanced Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
-        self.logger.info(f"Mean F1 Score: {mean_f1:.4f} ± {std_f1:.4f}")
+
+        self.logger.info(f"Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
+        self.logger.info(f"Mean Balanced Accuracy: {mean_bal_acc:.4f} ± {std_bal_acc:.4f}")
+        self.logger.info(f"Mean pF1 Score: {mean_pf1:.4f} ± {std_pf1:.4f}")
+        self.logger.info(f"Mean macroF1 Score: {mean_macro_f1:.4f} ± {std_macro_f1:.4f}")
         self.logger.info(f"Mean AUC-ROC: {mean_auc:.4f} ± {std_auc:.4f}")
+        self.logger.info(f"Mean Recall: {mean_recall:.4f} ± {std_recall:.4f}")
+        self.logger.info(f"Mean Precision: {mean_precision:.4f} ± {std_precision:.4f}")
         self.logger.info("="*50)
     
     def _final_test_evaluation(self, test_df: pd.DataFrame, data_root: str):
@@ -457,12 +512,21 @@ class BreastCancerTrainer:
             self.logger.info(f"Loaded best model from {best_model_path}")
         
         # Evaluate
+        # # === 1. Compute class weights === Dont apply this for test evaluation (chatGPT said so)
+        # targets = [label for _, label, _ in test_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
+        # class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
+        # weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
+
         criterion = nn.CrossEntropyLoss()
+
+        # use this function to obtain results for the test set (only 1 epoch)
         test_loss, test_metrics = self.validate_epoch(self.model, test_loader, criterion, 0)
         
         self.logger.info(f"Test Loss: {test_loss:.4f}")
+        self.logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
         self.logger.info(f"Test Balanced Accuracy: {test_metrics['balanced_accuracy']:.4f}")
-        self.logger.info(f"Test F1 Score: {test_metrics['f1_score']:.4f}")
+        self.logger.info(f"Test pF1: {test_metrics['pF1']:.4f}")
+        self.logger.info(f"Test macroF1: {test_metrics['macroF1']:.4f}")
         self.logger.info(f"Test AUC-ROC: {test_metrics.get('auc_roc', 0.0):.4f}")
         self.logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
         self.logger.info(f"Test Precision: {test_metrics['precision']:.4f}")

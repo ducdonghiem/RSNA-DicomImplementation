@@ -69,32 +69,24 @@ class BreastCancerDataset(Dataset):
         file_path = self._get_file_path(patient_id, scan_id)
         try:
             image = np.load(file_path)
-            
-            # Ensure image is in correct format
+
+            # Ensure float32
             if image.dtype != np.float32:
                 image = image.astype(np.float32)
 
-            # if isinstance(image, torch.Tensor):
-            #     # print("WTFFF")
-            #     image = image.numpy()
-            
-            # Optional: if needed by the transform
+            # Ensure [H, W, 3] before Albumentations (if using ImageNet transforms)
             if image.ndim == 2:
-                image = np.expand_dims(image, axis=-1)  # Make shape [H, W, 1]
-
-            # print("Type before transform:", type(image))
+                image = np.expand_dims(image, axis=-1)  # [H, W, 1]
+            if image.shape[2] == 1:
+                image = np.repeat(image, 3, axis=2)     # [H, W, 3]
 
             if self.transform:
                 transformed = self.transform(image=image)
-                image = transformed['image']  # Albumentations returns dict
+                image = transformed['image']  # [3, H, W] tensor
 
             else:
-                # Convert to tensor only if no transform is applied
-                image = torch.from_numpy(image).permute(2, 0, 1).float()
-                
-            # Ensure 3 channels for pretrained models
-            if image.shape[0] == 1:
-                image = image.repeat(3, 1, 1)
+                image = torch.from_numpy(image).permute(2, 0, 1).float()  # [3, H, W]
+
                 
         except Exception as e:
             print(f"Error loading {file_path}: {e}")
