@@ -29,7 +29,7 @@ def main():
     """Main function to run training."""
     # Configuration
     config = {
-        'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50'
+        'model_name': 'resnet50',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50'
         'num_classes': 2,
         'pretrained': True,
         'batch_size': 32,

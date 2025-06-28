@@ -260,7 +260,7 @@ class BreastCancerTrainer:
         # Split into train/test first
         train_df, test_df = train_test_split(
             df, 
-            test_size=0.2, 
+            test_size=0.05, 
             stratify=df[self.config.get('target_col', 'cancer')],
             random_state=42
         )
@@ -421,7 +421,7 @@ class BreastCancerTrainer:
                 f'Train MacroF1: {train_metrics["macroF1"]:.4f}, '
                 f'Train AUC: {train_metrics.get('auc_roc', 0.0):.4f}, '
                 f'Train Recall: {train_metrics["recall"]:.4f}, '
-                f'Train Precision: {train_metrics["precision"]:.4f}'
+                f'Train Precision: {train_metrics["precision"]:.4f}, '
                 f'Val Acc: {val_metrics["accuracy"]:.4f}, '
                 f'Val Balanced Acc: {val_metrics["balanced_accuracy"]:.4f}, '
                 f'Val pF1: {val_metrics["pF1"]:.4f}, '
