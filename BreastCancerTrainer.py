@@ -17,6 +17,7 @@ from MetricsCalculator import MetricsCalculator
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.utils.class_weight import compute_class_weight
+import csv
 
 class BreastCancerTrainer:
     """Main trainer class for breast cancer detection models."""
@@ -60,13 +61,40 @@ class BreastCancerTrainer:
         self.logger.info(f"Trainer initialized with model: {config['model_name']}")
         self.logger.info(f"Device: {self.device}")
     
+    # def _setup_logging(self):
+    #     """Setup logging configuration."""
+    #     logging.basicConfig(
+    #         level=logging.INFO,
+    #         format='%(asctime)s - %(levelname)s - %(message)s'
+    #     )
+    #     self.logger = logging.getLogger(__name__)
+
     def _setup_logging(self):
-        """Setup logging configuration."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
+        """Setup logging configuration to output to both console and file."""
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False  # prevent duplicate logs if root logger is configured elsewhere
+
+        # Define log format
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+        # Console handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        ch.setFormatter(formatter)
+
+        # File handler
+        fh = logging.FileHandler('../training_log.txt', mode='a')  # append to file
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(formatter)
+
+        # Clear old handlers (prevent duplicate logs if _setup_logging is called multiple times)
+        if self.logger.hasHandlers():
+            self.logger.handlers.clear()
+
+        # Add handlers
+        self.logger.addHandler(ch)
+        self.logger.addHandler(fh)
     
     def _get_train_transforms(self) -> A.Compose:
         """Get training transforms."""
@@ -430,6 +458,40 @@ class BreastCancerTrainer:
                 f'Val Recall: {val_metrics["recall"]:.4f}, '
                 f'Val Precision: {val_metrics["precision"]:.4f}'
             )
+
+            # CSV file path for the current fold
+            csv_file = f"{self.config['output_dir']}/fold_{fold}_metrics.csv"
+
+            # If this is the first epoch, create the file and write the header
+            if epoch == 0 and not os.path.exists(csv_file):
+                with open(csv_file, mode='w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        "Epoch", "Train Loss", "Val Loss",
+                        "Train Acc", "Train Balanced Acc", "Train pF1", "Train MacroF1", "Train AUC", "Train Recall", "Train Precision",
+                        "Val Acc", "Val Balanced Acc", "Val pF1", "Val MacroF1", "Val AUC", "Val Recall", "Val Precision"
+                    ])
+
+            # Append metrics for the current epoch
+            with open(csv_file, mode='a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    epoch + 1, train_loss, val_loss,
+                    train_metrics["accuracy"],
+                    train_metrics["balanced_accuracy"],
+                    train_metrics["pF1"],
+                    train_metrics["macroF1"],
+                    train_metrics.get("auc_roc", 0.0),
+                    train_metrics["recall"],
+                    train_metrics["precision"],
+                    val_metrics["accuracy"],
+                    val_metrics["balanced_accuracy"],
+                    val_metrics["pF1"],
+                    val_metrics["macroF1"],
+                    val_metrics.get("auc_roc", 0.0),
+                    val_metrics["recall"],
+                    val_metrics["precision"]
+                ])
             
             # Early stopping
             if patience_counter >= max_patience:
@@ -483,8 +545,71 @@ class BreastCancerTrainer:
         self.logger.info(f"Mean Precision: {mean_precision:.4f} ± {std_precision:.4f}")
         self.logger.info("="*50)
     
+    # only test model 5
+    # def _final_test_evaluation(self, test_df: pd.DataFrame, data_root: str):
+    #     """Evaluate on final test set."""
+    #     self.logger.info("\nFinal Test Set Evaluation")
+    #     self.logger.info("-" * 30)
+        
+    #     # Save test split
+    #     test_path = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_split.csv')
+    #     test_df.to_csv(test_path, index=False)
+        
+    #     # Create test dataset
+    #     test_dataset = BreastCancerDataset(test_path, data_root, self.val_transform)
+    #     test_loader = DataLoader(
+    #         test_dataset,
+    #         batch_size=self.config.get('batch_size', 32),
+    #         shuffle=False, 
+    #         num_workers=self.config.get('num_workers', 4)
+    #     )
+        
+    #     # Load best model from last fold (or you could ensemble)
+    #     best_model_path = os.path.join(
+    #         self.config.get('output_dir', 'outputs'), 
+    #         f'best_model_fold_{self.config.get("k_folds", 5)}.pth'
+    #     )
+        
+    #     if os.path.exists(best_model_path):
+    #         self.model.load_state_dict(torch.load(best_model_path))
+    #         self.logger.info(f"Loaded best model from {best_model_path}")
+        
+    #     # Evaluate
+    #     # # === 1. Compute class weights === Dont apply this for test evaluation (chatGPT said so)
+    #     # targets = [label for _, label, _ in test_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
+    #     # class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
+    #     # weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
+
+    #     criterion = nn.CrossEntropyLoss()
+
+    #     # use this function to obtain results for the test set (only 1 epoch)
+    #     test_loss, test_metrics = self.validate_epoch(self.model, test_loader, criterion, 0)
+        
+    #     self.logger.info(f"Test Loss: {test_loss:.4f}")
+    #     self.logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
+    #     self.logger.info(f"Test Balanced Accuracy: {test_metrics['balanced_accuracy']:.4f}")
+    #     self.logger.info(f"Test pF1: {test_metrics['pF1']:.4f}")
+    #     self.logger.info(f"Test macroF1: {test_metrics['macroF1']:.4f}")
+    #     self.logger.info(f"Test AUC-ROC: {test_metrics.get('auc_roc', 0.0):.4f}")
+    #     self.logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
+    #     self.logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
+        
+    #     # Save test results
+    #     results = {
+    #         'test_loss': test_loss,
+    #         'test_metrics': test_metrics,
+    #         'config': self.config
+    #     }
+        
+    #     results_path = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_results.json')
+    #     with open(results_path, 'w') as f:
+    #         json.dump(results, f, indent=2)
+        
+    #     self.logger.info(f"Results saved to {results_path}")
+
+    # ensemble all 5 models
     def _final_test_evaluation(self, test_df: pd.DataFrame, data_root: str):
-        """Evaluate on final test set."""
+        """Evaluate on final test set using ensemble of all fold models."""
         self.logger.info("\nFinal Test Set Evaluation")
         self.logger.info("-" * 30)
         
@@ -501,26 +626,58 @@ class BreastCancerTrainer:
             num_workers=self.config.get('num_workers', 4)
         )
         
-        # Load best model from last fold (or you could ensemble)
-        best_model_path = os.path.join(
-            self.config.get('output_dir', 'outputs'), 
-            f'best_model_fold_{self.config.get("k_folds", 5)}.pth'
-        )
+        # Load all fold models
+        models = []
+        k_folds = self.config.get("k_folds", 5)
+        for fold in range(1, k_folds + 1):
+            model_path = os.path.join(
+                self.config.get('output_dir', 'outputs'), 
+                f'best_model_fold_{fold}.pth'
+            )
+            if os.path.exists(model_path):
+                fold_model = type(self.model)()  # Create new instance
+                fold_model.load_state_dict(torch.load(model_path))
+                fold_model.to(self.device)
+                fold_model.eval()
+                models.append(fold_model)
+                self.logger.info(f"Loaded model from fold {fold}")
         
-        if os.path.exists(best_model_path):
-            self.model.load_state_dict(torch.load(best_model_path))
-            self.logger.info(f"Loaded best model from {best_model_path}")
-        
-        # Evaluate
-        # # === 1. Compute class weights === Dont apply this for test evaluation (chatGPT said so)
-        # targets = [label for _, label, _ in test_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
-        # class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
-        # weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
-
+        # Ensemble prediction
+        total_loss = 0.0
+        all_preds = []
+        all_targets = []
+        all_probs = []
         criterion = nn.CrossEntropyLoss()
-
-        # use this function to obtain results for the test set (only 1 epoch)
-        test_loss, test_metrics = self.validate_epoch(self.model, test_loader, criterion, 0)
+        
+        with torch.no_grad():
+            pbar = tqdm(test_loader, desc='Test [Ensemble]')
+            for batch_idx, (images, targets, metadata) in enumerate(pbar):
+                images, targets = images.to(self.device), targets.to(self.device)
+                
+                # Average predictions from all models
+                ensemble_outputs = torch.zeros_like(models[0](images))
+                for model in models:
+                    ensemble_outputs += model(images)
+                ensemble_outputs /= len(models)
+                
+                loss = criterion(ensemble_outputs, targets)
+                total_loss += loss.item()
+                
+                # Get predictions
+                probs = torch.softmax(ensemble_outputs, dim=1)
+                preds = torch.argmax(ensemble_outputs, dim=1)
+                
+                all_preds.extend(preds.cpu().numpy())
+                all_targets.extend(targets.cpu().numpy())
+                all_probs.extend(probs[:, 1].cpu().numpy())
+                
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'avg_loss': f'{total_loss/(batch_idx+1):.4f}'
+                })
+        
+        test_loss = total_loss / len(test_loader)
+        test_metrics = MetricsCalculator.calculate_metrics(all_targets, all_preds, all_probs)
         
         self.logger.info(f"Test Loss: {test_loss:.4f}")
         self.logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
