@@ -42,7 +42,23 @@ class ModelFactory:
             else:
                 model = torchvision.models.efficientnet_b0(weights=None)
             model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-            
+
+        # Small, detail-preserving, fast, Used in many medical image papers
+        elif model_name == 'densenet121':
+            if pretrained:
+                model = torchvision.models.densenet121(weights='IMAGENET1K_V1')
+            else:
+                model = torchvision.models.densenet121(weights=None)
+            model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+        
+        # 	Modern, robust, good generalizer, Stronger than ResNet in many tasks
+        elif model_name == 'convnext_tiny':
+            if pretrained:
+                model = torchvision.models.convnext_tiny(weights='IMAGENET1K_V1')
+            else:
+                model = torchvision.models.convnext_tiny(weights=None)
+            model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
+
         else:
             raise ValueError(f"Model {model_name} not supported")
             

@@ -24,19 +24,20 @@
 #=============================================================================
 
 from BreastCancerTrainer import BreastCancerTrainer
+import sys
 
 def main():
     """Main function to run training."""
     # Configuration
     config = {
-        'model_name': 'vit',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50'
+        'model_name': 'densenet121',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
         'num_classes': 2,
         'pretrained': True,
         'batch_size': 32,
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
         'epochs': 30,
-        'patience': 10,
+        'patience': 20,
         'num_workers': 4,
         'k_folds': 5,
         'target_col': 'cancer',
@@ -57,4 +58,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # Register the global exception handler
+    sys.excepthook = BreastCancerTrainer.handle_exception
     main()

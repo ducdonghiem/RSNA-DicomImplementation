@@ -84,7 +84,7 @@ class BreastCancerTrainer:
         ch.setFormatter(formatter)
 
         # File handler
-        fh = logging.FileHandler('../training_log.txt', mode='a')  # append to file
+        fh = logging.FileHandler(f'{self.config['output_dir']}/training_log.txt', mode='a')  # append to file
         fh.setLevel(logging.INFO)
         fh.setFormatter(formatter)
 
@@ -95,6 +95,10 @@ class BreastCancerTrainer:
         # Add handlers
         self.logger.addHandler(ch)
         self.logger.addHandler(fh)
+
+    @staticmethod
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        logging.getLogger(__name__).error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
     
     def _get_train_transforms(self) -> A.Compose:
         """Get training transforms."""
