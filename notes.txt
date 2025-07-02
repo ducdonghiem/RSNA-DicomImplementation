@@ -8,3 +8,10 @@ it is because of the IDE is still using the wrong python. Change the python inte
 
 # to check github acc
 git config --global user.email 
+
+
+# for gallium server, to fix "file too large" error while downloading libs:
+bash                        # switch to bash
+ulimit -a | grep file       # check quota
+ulimit -f unlimited         # this is the command
+pip install torch==1.13.1 --target=/…  # install
