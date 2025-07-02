@@ -30,14 +30,14 @@ def main():
     """Main function to run training."""
     # Configuration
     config = {
-        'model_name': 'densenet121',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
+        'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
         'num_classes': 2,
         'pretrained': True,
         'batch_size': 32,
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
         'epochs': 30,
-        'patience': 20,
+        'patience': 15,
         'num_workers': 4,
         'k_folds': 5,
         'target_col': 'cancer',

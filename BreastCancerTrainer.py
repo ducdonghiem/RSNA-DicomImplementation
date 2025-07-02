@@ -639,7 +639,12 @@ class BreastCancerTrainer:
                 f'best_model_fold_{fold}.pth'
             )
             if os.path.exists(model_path):
-                fold_model = type(self.model)()  # Create new instance
+                # fold_model = type(self.model)()  # Create new instance
+                fold_model = ModelFactory.create_model(
+                    self.config['model_name'],
+                    num_classes=self.config.get('num_classes', 2),
+                    pretrained=False
+                )
                 fold_model.load_state_dict(torch.load(model_path))
                 fold_model.to(self.device)
                 fold_model.eval()
