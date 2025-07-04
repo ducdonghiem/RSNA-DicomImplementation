@@ -1,0 +1,19 @@
+# Core packages
+numpy
+pandas
+scikit-learn
+matplotlib
+tqdm
+opencv-python
+pydicom
+scipy
+
+# PyTorch and torchvision
+torch
+torchvision
+
+# Albumentations for augmentation
+albumentations
+albumentations[imgaug]  # Optional, for advanced transformations
+albumentations[opencv]  # Ensures OpenCV compatibility
+albumentations[torch]   # Includes albumentations.pytorch
