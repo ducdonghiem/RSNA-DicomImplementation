@@ -12,12 +12,16 @@ import albumentations as A
 import albumentations.pytorch as AP
 from tqdm import tqdm
 from BreastCancerDataset import BreastCancerDataset
+from patch_producer import PatchProducer
 from ModelFactory import ModelFactory
 from MetricsCalculator import MetricsCalculator
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.utils.class_weight import compute_class_weight
 import csv
+import cv2
+
+from augs import CustomRandomSizedCropNoResize
 
 class BreastCancerTrainer:
     """Main trainer class for breast cancer detection models."""
@@ -45,6 +49,12 @@ class BreastCancerTrainer:
             pretrained=config.get('pretrained', True)
         )
         self.model.to(self.device)
+
+        # patch modify
+        self.patch_producer = None
+        if config['patched']:
+            self.patch_producer = PatchProducer()
+            self.patch_producer.to(self.device)
         
         # Initialize transforms
         self.train_transform = self._get_train_transforms()
@@ -100,24 +110,61 @@ class BreastCancerTrainer:
     def handle_exception(exc_type, exc_value, exc_traceback):
         logging.getLogger(__name__).error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
     
+    # def _get_train_transforms(self) -> A.Compose:
+    #     """Get training transforms."""
+    #     return A.Compose([
+    #         A.Resize(256, 256),
+    #         A.RandomCrop(224, 224),
+    #         A.HorizontalFlip(p=0.5),
+    #         # A.VerticalFlip(p=0.5),
+    #         # A.RandomBrightnessContrast(p=0.2, brightness_limit=0.1, contrast_limit=0.1),
+    #         A.OneOf([
+    #             A.Blur(blur_limit=3, p=0.5),
+    #             # A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+    #             # A.GaussNoise(std_range=(0.2, 0.44), mean_range=(0, 0), p=0.5),
+    #             A.GaussNoise(std_range=(0.02, 0.08), mean_range=(0.0, 0.0), p=0.5)
+    #         ], p=0.2),
+    #         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # imagenet stats
+    #         AP.ToTensorV2()
+    #     ])
+
+    # from https://www.kaggle.com/competitions/rsna-breast-cancer-detection/discussion/392449
     def _get_train_transforms(self) -> A.Compose:
         """Get training transforms."""
         return A.Compose([
-            A.Resize(256, 256),
-            A.RandomCrop(224, 224),
+            # crop, tweak from A.RandomSizedCrop()
+            CustomRandomSizedCropNoResize(scale=(0.5, 1.0), ratio=(0.5, 0.8), p=0.4),
+            # flip
             A.HorizontalFlip(p=0.5),
-            # A.VerticalFlip(p=0.5),
-            # A.RandomBrightnessContrast(p=0.2, brightness_limit=0.1, contrast_limit=0.1),
+            A.VerticalFlip(p=0.5),
+            # downscale
             A.OneOf([
-                A.Blur(blur_limit=3, p=0.5),
-                # A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
-                # A.GaussNoise(std_range=(0.2, 0.44), mean_range=(0, 0), p=0.5),
-                A.GaussNoise(std_range=(0.02, 0.08), mean_range=(0.0, 0.0), p=0.5)
-            ], p=0.2),
-            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # imagenet stats
-            AP.ToTensorV2()
-        ])
-    
+                A.Downscale(scale_min=0.75, scale_max=0.95, interpolation=dict(upscale=cv2.INTER_LINEAR, downscale=cv2.INTER_AREA), p=0.1),
+                A.Downscale(scale_min=0.75, scale_max=0.95, interpolation=dict(upscale=cv2.INTER_LANCZOS4, downscale=cv2.INTER_AREA), p=0.1),
+                A.Downscale(scale_min=0.75, scale_max=0.95, interpolation=dict(upscale=cv2.INTER_LINEAR, downscale=cv2.INTER_LINEAR), p=0.8),
+            ], p=0.125),
+            # contrast
+            A.OneOf([
+                A.RandomToneCurve(scale=0.3, p=0.5),
+                A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.2), contrast_limit=(-0.4, 0.5), brightness_by_max=True, always_apply=False, p=0.5)
+            ], p=0.5),
+            # geometric
+            A.OneOf(
+                [
+                    A.ShiftScaleRotate(shift_limit=None, scale_limit=[-0.15, 0.15], rotate_limit=[-30, 30], interpolation=cv2.INTER_LINEAR,
+                                    border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=None, shift_limit_x=[-0.1, 0.1],
+                                    shift_limit_y=[-0.2, 0.2], rotate_method='largest_box', p=0.6),
+                    A.ElasticTransform(alpha=1, sigma=20, alpha_affine=10, interpolation=cv2.INTER_LINEAR, border_mode=cv2.BORDER_CONSTANT,
+                                    value=0, mask_value=None, approximate=False, same_dxdy=False, p=0.2),
+                    A.GridDistortion(num_steps=5, distort_limit=0.3, interpolation=cv2.INTER_LINEAR, border_mode=cv2.BORDER_CONSTANT,
+                                    value=0, mask_value=None, normalized=True, p=0.2),
+                ], p=0.5),
+            # random erase
+            A.CoarseDropout(max_holes=6, max_height=0.15, max_width=0.25, min_holes=1, min_height=0.05, min_width=0.1,
+                            fill_value=0, mask_fill_value=None, p=0.25),
+            ], p=0.9)
+
+    # no need to change ?
     def _get_val_transforms(self) -> A.Compose:
         """Get validation transforms."""
         return A.Compose([
@@ -198,6 +245,11 @@ class BreastCancerTrainer:
                    epoch: int) -> Tuple[float, Dict[str, float]]:
         """Train for one epoch."""
         model.train()
+
+        # patch modify
+        if self.patch_producer:
+            self.patch_producer.train()
+
         total_loss = 0.0
         all_preds = []
         all_targets = []
@@ -205,9 +257,15 @@ class BreastCancerTrainer:
         
         pbar = tqdm(train_loader, desc=f'Epoch {epoch+1} [Train]')
         for batch_idx, (images, targets, metadata) in enumerate(pbar):
-            images, targets = images.to(self.device), targets.to(self.device)
+            images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
             
             optimizer.zero_grad()
+            
+            # patch modify
+            if self.patch_producer:
+                patch = self.patch_producer(metadata)
+                images[:, :, :16, 208:] = patch
+
             outputs = model(images)
             loss = criterion(outputs, targets)
             loss.backward()
@@ -240,6 +298,11 @@ class BreastCancerTrainer:
                       criterion: nn.Module, epoch: int) -> Tuple[float, Dict[str, float]]:
         """Validate for one epoch."""
         model.eval()
+
+        # patch modify
+        if self.patch_producer:
+            self.patch_producer.eval()
+
         total_loss = 0.0
         all_preds = []
         all_targets = []
@@ -248,7 +311,12 @@ class BreastCancerTrainer:
         with torch.no_grad():
             pbar = tqdm(val_loader, desc=f'Epoch {epoch+1} [Val]')
             for batch_idx, (images, targets, metadata) in enumerate(pbar):
-                images, targets = images.to(self.device), targets.to(self.device)
+                images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
+
+                # patch modify
+                if self.patch_producer:
+                    patch = self.patch_producer(metadata)
+                    images[:, :, :16, 208:] = patch
                 
                 outputs = model(images)
                 loss = criterion(outputs, targets)
@@ -648,6 +716,11 @@ class BreastCancerTrainer:
                 fold_model.load_state_dict(torch.load(model_path))
                 fold_model.to(self.device)
                 fold_model.eval()
+
+                # patch modify
+                if self.patch_producer:
+                    self.patch_producer.eval()
+
                 models.append(fold_model)
                 self.logger.info(f"Loaded model from fold {fold}")
         
@@ -661,7 +734,12 @@ class BreastCancerTrainer:
         with torch.no_grad():
             pbar = tqdm(test_loader, desc='Test [Ensemble]')
             for batch_idx, (images, targets, metadata) in enumerate(pbar):
-                images, targets = images.to(self.device), targets.to(self.device)
+                images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
+
+                # patch modify
+                if self.patch_producer:
+                    patch = self.patch_producer(metadata)
+                    images[:, :, :16, 208:] = patch
                 
                 # Average predictions from all models
                 ensemble_outputs = torch.zeros_like(models[0](images))

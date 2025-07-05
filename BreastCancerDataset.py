@@ -94,6 +94,7 @@ class BreastCancerDataset(Dataset):
             image = torch.zeros(3, 224, 224)
             target = 0
         
+        # needed to modify for patching
         metadata = {
             'scan_id': scan_id,
             'patient_id': patient_id,

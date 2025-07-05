@@ -33,6 +33,7 @@ def main():
         'model_name': 'resnet50',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
         'num_classes': 2,
         'pretrained': True,
+        'patched': False,
         'batch_size': 32,
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
