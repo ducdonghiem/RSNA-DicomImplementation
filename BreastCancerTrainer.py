@@ -133,7 +133,7 @@ class BreastCancerTrainer:
         """Get training transforms."""
         return A.Compose([
             # crop, tweak from A.RandomSizedCrop()
-            CustomRandomSizedCropNoResize(scale=(0.5, 1.0), ratio=(0.5, 0.8), p=0.4),
+            CustomRandomSizedCropNoResize(scale=(0.8, 1.0), ratio=(0.5, 0.8), p=0.4),       # original: scale=(0.5, 1.0)
             # flip
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
@@ -162,6 +162,10 @@ class BreastCancerTrainer:
             # random erase
             A.CoarseDropout(max_holes=6, max_height=0.15, max_width=0.25, min_holes=1, min_height=0.05, min_width=0.1,
                             fill_value=0, mask_fill_value=None, p=0.25),
+            A.Resize(224, 224),  # ← This is needed!
+            # Add normalization here (not in the original script)
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            AP.ToTensorV2()
             ], p=0.9)
 
     # no need to change ?
