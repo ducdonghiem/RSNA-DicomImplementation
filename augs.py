@@ -8,13 +8,38 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
-from albumentations import random_utils
+# from albumentations import random_utils
+# from albumentations.core.utils import random_utils
+# from albumentations.core import random_utils
 from albumentations.augmentations.crops import functional as F
 from albumentations.augmentations.geometric import functional as FGeometric
-from albumentations.augmentations.utils import (_maybe_process_in_chunks,
-                                                preserve_shape)
+# from albumentations.augmentations.utils import (_maybe_process_in_chunks,
+#                                                 preserve_shape)
+# from albumentations.augmentations.utils import preserve_shape
+import functools
+
 from albumentations.core.transforms_interface import (DualTransform,
                                                       ImageOnlyTransform)
+
+# Create a replacement for random_utils
+class RandomUtils:
+    @staticmethod
+    def uniform(a, b):
+        return random.uniform(a, b)
+    
+    @staticmethod
+    def randint(a, b):
+        return random.randint(a, b)
+    
+    @staticmethod
+    def random():
+        return random.random()
+    
+    @staticmethod
+    def normal(loc=0.0, scale=1.0):
+        return np.random.normal(loc=loc, scale=scale)
+
+random_utils = RandomUtils()
 
 
 class _CustomBaseRandomSizedCropNoResize(DualTransform):
@@ -147,6 +172,34 @@ class CustomRandomSizedCropNoResize(_CustomBaseRandomSizedCropNoResize):
 
     def get_transform_init_args_names(self):
         return "scale", "ratio"
+    
+# Add missing functions:
+def preserve_shape(func):
+    """
+    Decorator to preserve image shape after transformation.
+    """
+    @functools.wraps(func)
+    def wrapped_function(img, *args, **kwargs):
+        original_shape = img.shape
+        result = func(img, *args, **kwargs)
+        
+        # If result shape changed, try to reshape back
+        if result.shape != original_shape:
+            if len(original_shape) == 3 and len(result.shape) == 2:
+                # Add channel dimension back
+                result = np.expand_dims(result, axis=2)
+            elif len(original_shape) == 2 and len(result.shape) == 3:
+                # Remove channel dimension
+                result = np.squeeze(result, axis=2)
+        
+        return result
+    return wrapped_function
+    
+def _maybe_process_in_chunks(process_fn, **kwargs):
+    """Simple replacement for _maybe_process_in_chunks"""
+    def apply_fn(img, **fn_kwargs):
+        return process_fn(img, **fn_kwargs)
+    return apply_fn
 
 
 # @TODO: support other native dtype: float, uint16,.. or support higher bit-depth (current 8 bits, LUT size = 256)

@@ -133,40 +133,72 @@ class BreastCancerTrainer:
         """Get training transforms."""
         return A.Compose([
             # crop, tweak from A.RandomSizedCrop()
-            CustomRandomSizedCropNoResize(scale=(0.8, 1.0), ratio=(0.5, 0.8), p=0.4),       # original: scale=(0.5, 1.0)
+            CustomRandomSizedCropNoResize(scale=(0.8, 1.0), ratio=(0.6, 0.9), p=0.4),       # Original was scale=(0.5, 1.0),  ratio=(0.5, 0.8)
             # flip
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
-            # downscale
+            # downscale - FIXED with correct parameters
             A.OneOf([
-                A.Downscale(scale_min=0.75, scale_max=0.95, interpolation=dict(upscale=cv2.INTER_LINEAR, downscale=cv2.INTER_AREA), p=0.1),
-                A.Downscale(scale_min=0.75, scale_max=0.95, interpolation=dict(upscale=cv2.INTER_LANCZOS4, downscale=cv2.INTER_AREA), p=0.1),
-                A.Downscale(scale_min=0.75, scale_max=0.95, interpolation=dict(upscale=cv2.INTER_LINEAR, downscale=cv2.INTER_LINEAR), p=0.8),
+                A.Downscale(scale_range=(0.75, 0.95), interpolation_pair={"upscale": cv2.INTER_LINEAR, "downscale": cv2.INTER_AREA}, p=0.1),
+                A.Downscale(scale_range=(0.75, 0.95), interpolation_pair={"upscale": cv2.INTER_LANCZOS4, "downscale": cv2.INTER_AREA}, p=0.1),
+                A.Downscale(scale_range=(0.75, 0.95), interpolation_pair={"upscale": cv2.INTER_LINEAR, "downscale": cv2.INTER_LINEAR}, p=0.8),
             ], p=0.125),
             # contrast
             A.OneOf([
                 A.RandomToneCurve(scale=0.3, p=0.5),
-                A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.2), contrast_limit=(-0.4, 0.5), brightness_by_max=True, always_apply=False, p=0.5)
+                A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.2), contrast_limit=(-0.4, 0.5), brightness_by_max=True, p=0.5)
             ], p=0.5),
-            # geometric
-            A.OneOf(
-                [
-                    A.ShiftScaleRotate(shift_limit=None, scale_limit=[-0.15, 0.15], rotate_limit=[-30, 30], interpolation=cv2.INTER_LINEAR,
-                                    border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=None, shift_limit_x=[-0.1, 0.1],
-                                    shift_limit_y=[-0.2, 0.2], rotate_method='largest_box', p=0.6),
-                    A.ElasticTransform(alpha=1, sigma=20, alpha_affine=10, interpolation=cv2.INTER_LINEAR, border_mode=cv2.BORDER_CONSTANT,
-                                    value=0, mask_value=None, approximate=False, same_dxdy=False, p=0.2),
-                    A.GridDistortion(num_steps=5, distort_limit=0.3, interpolation=cv2.INTER_LINEAR, border_mode=cv2.BORDER_CONSTANT,
-                                    value=0, mask_value=None, normalized=True, p=0.2),
-                ], p=0.5),
-            # random erase
-            A.CoarseDropout(max_holes=6, max_height=0.15, max_width=0.25, min_holes=1, min_height=0.05, min_width=0.1,
-                            fill_value=0, mask_fill_value=None, p=0.25),
-            A.Resize(224, 224),  # ← This is needed!
-            # Add normalization here (not in the original script)
+            # geometric - FIXED with correct parameters
+            A.OneOf([
+                A.ShiftScaleRotate(
+                    shift_limit=0.0, 
+                    scale_limit=[-0.15, 0.15], 
+                    rotate_limit=[-30, 30], 
+                    interpolation=cv2.INTER_LINEAR,
+                    border_mode=cv2.BORDER_CONSTANT, 
+                    shift_limit_x=[-0.1, 0.1],
+                    shift_limit_y=[-0.2, 0.2], 
+                    rotate_method='largest_box',
+                    fill=0,  # Changed from 'value' to 'fill'
+                    fill_mask=0,  # Changed from 'mask_value' to 'fill_mask'
+                    p=0.6
+                ),
+                A.ElasticTransform(
+                    alpha=1, 
+                    sigma=20, 
+                    interpolation=cv2.INTER_LINEAR, 
+                    border_mode=cv2.BORDER_CONSTANT,
+                    fill=0,  # Changed from 'value' to 'fill'
+                    fill_mask=0,  # Changed from 'mask_value' to 'fill_mask'
+                    approximate=False, 
+                    same_dxdy=False, 
+                    p=0.2
+                ),
+                A.GridDistortion(
+                    num_steps=5, 
+                    distort_limit=0.3, 
+                    interpolation=cv2.INTER_LINEAR, 
+                    border_mode=cv2.BORDER_CONSTANT,
+                    fill=0,  # Changed from 'value' to 'fill'
+                    fill_mask=0,  # Changed from 'mask_value' to 'fill_mask'
+                    normalized=True, 
+                    p=0.2
+                ),
+            ], p=0.5),
+            # random erase - FIXED with correct parameters
+            A.CoarseDropout(
+                num_holes_range=(1, 6),  # Changed from min_holes/max_holes
+                hole_height_range=(0.05, 0.15),  # Changed from min_height/max_height
+                hole_width_range=(0.1, 0.25),  # Changed from min_width/max_width
+                fill=0,  # Changed from fill_value
+                fill_mask=None,  # Changed from mask_fill_value
+                p=0.25
+            ),
+            # ADD THESE MISSING LINES:
+            A.Resize(224, 224),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             AP.ToTensorV2()
-            ], p=0.9)
+        ], p=0.9)
 
     # no need to change ?
     def _get_val_transforms(self) -> A.Compose:
