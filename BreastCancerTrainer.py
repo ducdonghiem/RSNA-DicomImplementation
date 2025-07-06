@@ -209,11 +209,10 @@ class BreastCancerTrainer:
                     fill_mask=None,  # Changed from mask_fill_value
                     p=0.25
                 ),
-                # ADD THESE MISSING LINES:
-                A.Resize(224, 224),
-                A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-                
             ], p=0.9),
+            # ADD THESE MISSING LINES:
+            A.Resize(224, 224),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             AP.ToTensorV2()
           ])
 
