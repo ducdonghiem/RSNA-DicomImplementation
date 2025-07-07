@@ -51,6 +51,12 @@ class BreastCancerDataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
     
+    # get metadata for the corresponding idx
+    def _get_metadata(self, row):
+        exclude_cols = ['patient_id', 'image_id', 'cancer', 'biopsy', 'invasive', 'difficult_negative_case', 'BIRADS', 'density']       # they also excluded implant
+        row = row.drop(exclude_cols).astype(float)
+        return torch.tensor(row.values, dtype=torch.float32)
+    
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int, Dict]:
         """
         Get a single item from the dataset.
@@ -95,10 +101,11 @@ class BreastCancerDataset(Dataset):
             target = 0
         
         # needed to modify for patching
-        metadata = {
-            'scan_id': scan_id,
-            'patient_id': patient_id,
-            'file_path': file_path
-        }
+        metadata = self._get_metadata(self.df.loc[idx])
+        # metadata = {
+        #     'scan_id': scan_id,
+        #     'patient_id': patient_id,
+        #     'file_path': file_path
+        # }
         
         return image, target, metadata

@@ -4,7 +4,7 @@ import numpy as np
 
 # Fixed version of your PatchProducer class
 class PatchProducer(nn.Module):
-    def __init__(self, input_dim=21, patch_len=16, dropout=0.2, channels=3):  # Fixed __init__
+    def __init__(self, input_dim=22, patch_len=16, dropout=0.2, channels=3):  # Fixed __init__
         super(PatchProducer, self).__init__()
         self.channels = channels
         self.patch_len = patch_len

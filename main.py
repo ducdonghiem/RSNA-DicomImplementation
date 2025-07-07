@@ -33,7 +33,7 @@ def main():
         'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
         'num_classes': 2,
         'pretrained': True,
-        'patched': False,
+        'patched': True,
         'batch_size': 32,
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
@@ -46,7 +46,7 @@ def main():
     }
     
     # Paths (adjust these to your data)
-    csv_path = '../../train.csv'  # Your CSV file with scan_id, patient_id, cancer columns
+    csv_path = '../../train_expanded.csv'  # Your CSV file with scan_id, patient_id, cancer columns
     data_root = '../../processed_data'      # Root directory containing patient folders with .npy files
     
     # Create trainer
