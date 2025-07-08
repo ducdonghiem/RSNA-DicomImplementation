@@ -34,6 +34,8 @@ df = df.replace({'False': 0, 'True': 1})  # Handles string booleans
 bool_cols = df.select_dtypes(include=['bool']).columns
 df[bool_cols] = df[bool_cols].astype(int)
 
+# normalize age col
+df['age'] = (df['age'] - df['age'].mean()) / df['age'].std()
 
 # Step 6: Save
 df.to_csv('../../train_expanded.csv', index=False)
