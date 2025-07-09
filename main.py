@@ -43,7 +43,7 @@ def main():
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
         'epochs': 40,
-        'patience': 30,
+        'patience': 20,
         'num_workers': 4,
         'k_folds': 5,
         'target_col': 'cancer',

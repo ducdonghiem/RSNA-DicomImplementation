@@ -324,7 +324,7 @@ class BreastCancerTrainer:
                 soft_targets = targets.float().clone()
                 soft_targets[soft_targets == 1] = self.config['soft_pos']
                 soft_targets[soft_targets == 0] = self.config['soft_neg']
-                soft_targets = soft_targets.unsqueeze(1)  # Ensure shape [B, 1] for BCEWithLogitsLoss
+                # soft_targets = soft_targets.unsqueeze(1)  # Ensure shape [B, 1] for BCEWithLogitsLoss
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, soft_targets)
             else:
@@ -392,7 +392,7 @@ class BreastCancerTrainer:
                     soft_targets = targets.float().clone()
                     soft_targets[soft_targets == 1] = self.config['soft_pos']
                     soft_targets[soft_targets == 0] = self.config['soft_neg']
-                    soft_targets = soft_targets.unsqueeze(1)  # Ensure shape [B, 1] for BCEWithLogitsLoss
+                    # soft_targets = soft_targets.unsqueeze(1)  # Ensure shape [B, 1] for BCEWithLogitsLoss
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, soft_targets)
                 else:
@@ -846,7 +846,7 @@ class BreastCancerTrainer:
                     soft_targets = targets.float().clone()
                     soft_targets[soft_targets == 1] = self.config['soft_pos']
                     soft_targets[soft_targets == 0] = self.config['soft_neg']
-                    soft_targets = soft_targets.unsqueeze(1)
+                    # soft_targets = soft_targets.unsqueeze(1)
                     loss = criterion(ensemble_outputs.squeeze(1), soft_targets)
                 else:
                     loss = criterion(ensemble_outputs, targets)
