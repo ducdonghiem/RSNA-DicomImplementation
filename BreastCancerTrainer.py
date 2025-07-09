@@ -587,10 +587,10 @@ class BreastCancerTrainer:
             )
             
             # Update scheduler
-            scheduler.step(val_metrics['balanced_accuracy'])
+            scheduler.step(val_metrics[self.config['default_metric']])
             
             # Check for improvement
-            val_score = val_metrics['balanced_accuracy']
+            val_score = val_metrics[self.config['default_metric']]
             if val_score > best_val_score:
                 best_val_score = val_score
                 best_val_metrics = val_metrics.copy()

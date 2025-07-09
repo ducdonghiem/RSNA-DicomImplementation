@@ -32,6 +32,7 @@ def main():
     config = {
         'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
         'num_classes': 1,
+        'default_metric': 'balanced_accuracy',          # 'balanced_accuracy' (original) or 'pF1' or 'macroF1' or 'recall' or 'precision'
         'pretrained': True,
         'patched': True,
         'soft_label': True,         # will use BCE loss, and sigmoid. MUST SET num_classes = 1. If set false, MUST SET num_classes = 2
@@ -42,7 +43,7 @@ def main():
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,
         'epochs': 40,
-        'patience': 20,
+        'patience': 30,
         'num_workers': 4,
         'k_folds': 5,
         'target_col': 'cancer',
