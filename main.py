@@ -31,9 +31,13 @@ def main():
     # Configuration
     config = {
         'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
-        'num_classes': 2,
+        'num_classes': 1,
         'pretrained': True,
         'patched': True,
+        'soft_label': True,         # will use BCE loss, and sigmoid. MUST SET num_classes = 1. If set false, MUST SET num_classes = 2
+        'soft_pos': 0.8,            # for soft_label. Ignore if not use soft_label
+        'soft_neg': 0.0,            # for soft_label. Ignore if not use soft_label
+        'threshold': 0.49,           # for soft_label. Ignore if not use soft_label
         'batch_size': 32,
         'learning_rate': 1e-4,
         'weight_decay': 1e-4,

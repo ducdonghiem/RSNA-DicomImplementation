@@ -55,6 +55,8 @@ class BreastCancerTrainer:
         if config['patched']:
             self.patch_producer = PatchProducer()
             self.patch_producer.to(self.device)
+
+        # if config['soft_label']:
         
         # Initialize transforms
         self.train_transform = self._get_train_transforms()
@@ -310,7 +312,7 @@ class BreastCancerTrainer:
         pbar = tqdm(train_loader, desc=f'Epoch {epoch+1} [Train]')
         for batch_idx, (images, targets, metadata) in enumerate(pbar):
             images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
-            
+
             optimizer.zero_grad()
             
             # patch modify
@@ -318,21 +320,37 @@ class BreastCancerTrainer:
                 patch = self.patch_producer(metadata)
                 images[:, :, :16, 208:] = patch
 
-            outputs = model(images)
-            loss = criterion(outputs, targets)
+            if self.config['soft_label']:
+                soft_targets = targets.float().clone()
+                soft_targets[soft_targets == 1] = self.config['soft_pos']
+                soft_targets[soft_targets == 0] = self.config['soft_neg']
+                soft_targets = soft_targets.unsqueeze(1)  # Ensure shape [B, 1] for BCEWithLogitsLoss
+                outputs = model(images).squeeze(1)
+                loss = criterion(outputs, soft_targets)
+            else:
+                outputs = model(images)
+                loss = criterion(outputs, targets)
+
             loss.backward()
             optimizer.step()
             
             total_loss += loss.item()
             
             # Get predictions
-            probs = torch.softmax(outputs, dim=1)
-            preds = torch.argmax(outputs, dim=1)
+            if self.config['soft_label']:
+                probs = torch.sigmoid(outputs)            # Correct for BCEWithLogitsLoss
+                preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
+            else:
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(outputs, dim=1)
             
             all_preds.extend(preds.cpu().numpy())
             all_targets.extend(targets.cpu().numpy())
-            # all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of positive class
-            all_probs.extend(probs[:, 1].detach().cpu().numpy())
+
+            if self.config['soft_label']:
+                all_probs.extend(probs.detach().cpu().numpy())  # probs is already class 1
+            else:
+                all_probs.extend(probs[:, 1].detach().cpu().numpy())  # take prob for class 1
             
             # Update progress bar
             pbar.set_postfix({
@@ -369,19 +387,35 @@ class BreastCancerTrainer:
                 if self.patch_producer:
                     patch = self.patch_producer(metadata)
                     images[:, :, :16, 208:] = patch
-                
-                outputs = model(images)
-                loss = criterion(outputs, targets)
+
+                if self.config['soft_label']:
+                    soft_targets = targets.float().clone()
+                    soft_targets[soft_targets == 1] = self.config['soft_pos']
+                    soft_targets[soft_targets == 0] = self.config['soft_neg']
+                    soft_targets = soft_targets.unsqueeze(1)  # Ensure shape [B, 1] for BCEWithLogitsLoss
+                    outputs = model(images).squeeze(1)
+                    loss = criterion(outputs, soft_targets)
+                else:
+                    outputs = model(images)
+                    loss = criterion(outputs, targets)
                 
                 total_loss += loss.item()
                 
                 # Get predictions
-                probs = torch.softmax(outputs, dim=1)
-                preds = torch.argmax(outputs, dim=1)
+                if self.config['soft_label']:
+                    probs = torch.sigmoid(outputs)            # Correct for BCEWithLogitsLoss
+                    preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
+                else:
+                    probs = torch.softmax(outputs, dim=1)
+                    preds = torch.argmax(outputs, dim=1)
                 
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(targets.cpu().numpy())
-                all_probs.extend(probs[:, 1].cpu().numpy())
+
+                if self.config['soft_label']:
+                    all_probs.extend(probs.detach().cpu().numpy())  # probs is already class 1
+                else:
+                    all_probs.extend(probs[:, 1].detach().cpu().numpy())  # take prob for class 1
                 
                 # Update progress bar
                 pbar.set_postfix({
@@ -509,9 +543,14 @@ class BreastCancerTrainer:
         class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
         weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
 
+        # Combine model and patch_producer parameters
+        params = list(self.model.parameters())
+        if self.patch_producer:
+            params += list(self.patch_producer.parameters())
+
         # Setup optimizer and scheduler
         optimizer = optim.Adam(
-            self.model.parameters(), 
+            params,
             lr=self.config.get('learning_rate', 1e-4),
             weight_decay=self.config.get('weight_decay', 1e-4)
         )
@@ -525,7 +564,10 @@ class BreastCancerTrainer:
         )
         
         # Setup loss function
-        criterion = nn.CrossEntropyLoss(weight=weight_tensor)   #  handle class imbalance by using class weights in the loss function to penalize the model more for misclassifying the minority class (cancer).
+        if self.config['soft_label']:
+            criterion = nn.BCEWithLogitsLoss()
+        else:
+            criterion = nn.CrossEntropyLoss(weight=weight_tensor)   #  handle class imbalance by using class weights in the loss function to penalize the model more for misclassifying the minority class (cancer).
         
         # Training loop
         best_val_metrics = None
@@ -781,7 +823,11 @@ class BreastCancerTrainer:
         all_preds = []
         all_targets = []
         all_probs = []
-        criterion = nn.CrossEntropyLoss()
+
+        if self.config['soft_label']:
+            criterion = nn.BCEWithLogitsLoss()
+        else:
+            criterion = nn.CrossEntropyLoss()
         
         with torch.no_grad():
             pbar = tqdm(test_loader, desc='Test [Ensemble]')
@@ -792,23 +838,37 @@ class BreastCancerTrainer:
                 if self.patch_producer:
                     patch = self.patch_producer(metadata)
                     images[:, :, :16, 208:] = patch
-                
-                # Average predictions from all models
-                ensemble_outputs = torch.zeros_like(models[0](images))
-                for model in models:
-                    ensemble_outputs += model(images)
-                ensemble_outputs /= len(models)
-                
-                loss = criterion(ensemble_outputs, targets)
+
+                outputs_list = [model(images) for model in models]
+                ensemble_outputs = torch.stack(outputs_list).mean(dim=0)
+
+                if self.config['soft_label']:
+                    soft_targets = targets.float().clone()
+                    soft_targets[soft_targets == 1] = self.config['soft_pos']
+                    soft_targets[soft_targets == 0] = self.config['soft_neg']
+                    soft_targets = soft_targets.unsqueeze(1)
+                    loss = criterion(ensemble_outputs.squeeze(1), soft_targets)
+                else:
+                    loss = criterion(ensemble_outputs, targets)
+      
+
                 total_loss += loss.item()
-                
+
                 # Get predictions
-                probs = torch.softmax(ensemble_outputs, dim=1)
-                preds = torch.argmax(ensemble_outputs, dim=1)
+                if self.config['soft_label']:
+                    probs = torch.sigmoid(ensemble_outputs)            # Correct for BCEWithLogitsLoss
+                    preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
+                else:
+                    probs = torch.softmax(ensemble_outputs, dim=1)
+                    preds = torch.argmax(ensemble_outputs, dim=1)
                 
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(targets.cpu().numpy())
-                all_probs.extend(probs[:, 1].cpu().numpy())
+
+                if self.config['soft_label']:
+                    all_probs.extend(probs.detach().cpu().numpy())  # probs is already class 1
+                else:
+                    all_probs.extend(probs[:, 1].cpu().numpy())  # take prob for class 1
                 
                 pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',

@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Replace with your actual CSV file path
-csv_file = '../outputs7-efficientnetb0/fold_2_metrics.csv'
+csv_file = '../outputs/fold_5_metrics.csv'
 
 # Read the CSV
 df = pd.read_csv(csv_file)
