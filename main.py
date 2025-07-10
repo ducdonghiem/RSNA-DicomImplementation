@@ -26,16 +26,19 @@
 from BreastCancerTrainer import BreastCancerTrainer
 import sys
 
+# import pandas as pd
+# from sklearn.model_selection import train_test_split
+
 def main():
     """Main function to run training."""
     # Configuration
     config = {
         'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
-        'num_classes': 1,
+        'num_classes': 2,
         'default_metric': 'balanced_accuracy',          # 'balanced_accuracy' (original) or 'pF1' or 'macroF1' or 'recall' or 'precision'
         'pretrained': True,
         'patched': True,
-        'soft_label': True,         # will use BCE loss, and sigmoid. MUST SET num_classes = 1. If set false, MUST SET num_classes = 2
+        'soft_label': False,         # will use BCE loss, and sigmoid. MUST SET num_classes = 1. If set false, MUST SET num_classes = 2
         'soft_pos': 0.8,            # for soft_label. Ignore if not use soft_label
         'soft_neg': 0.0,            # for soft_label. Ignore if not use soft_label
         'threshold': 0.49,           # for soft_label. Ignore if not use soft_label
@@ -61,6 +64,24 @@ def main():
     fold_results = trainer.train_with_kfold(csv_path, data_root, k_folds=5)
     
     print("Training completed successfully!")
+
+    """ to test the final_test_evaluation
+
+    # Load data
+    # df = pd.read_csv(csv_path)
+    
+    # # Split into train/test first
+    # train_df, test_df = train_test_split(
+    #     df, 
+    #     test_size=0.05, 
+    #     stratify=df['cancer'],
+    #     random_state=42
+    # )
+
+    # # Final evaluation on test set
+    # trainer._final_test_evaluation(test_df, data_root)
+
+    """
 
 
 if __name__ == "__main__":

@@ -877,6 +877,12 @@ class BreastCancerTrainer:
         
         test_loss = total_loss / len(test_loader)
         test_metrics = MetricsCalculator.calculate_metrics(all_targets, all_preds, all_probs)
+
+        # Convert test_metrics to pure Python types
+        test_metrics = {
+            k: (v.item() if isinstance(v, np.generic) else float(v))
+            for k, v in test_metrics.items()
+        }
         
         self.logger.info(f"Test Loss: {test_loss:.4f}")
         self.logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
@@ -886,7 +892,14 @@ class BreastCancerTrainer:
         self.logger.info(f"Test AUC-ROC: {test_metrics.get('auc_roc', 0.0):.4f}")
         self.logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
         self.logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
-        
+        # self.logger.info(f"Test Accuracy: {float(test_metrics['accuracy']):.4f}")
+        # self.logger.info(f"Test Balanced Accuracy: {float(test_metrics['balanced_accuracy']):.4f}")
+        # self.logger.info(f"Test pF1: {float(test_metrics['pF1']):.4f}")
+        # self.logger.info(f"Test macroF1: {float(test_metrics['macroF1']):.4f}")
+        # self.logger.info(f"Test AUC-ROC: {float(test_metrics.get('auc_roc', 0.0)):.4f}")
+        # self.logger.info(f"Test Recall: {float(test_metrics['recall']):.4f}")
+        # self.logger.info(f"Test Precision: {float(test_metrics['precision']):.4f}")
+
         # Save test results
         results = {
             'test_loss': test_loss,
