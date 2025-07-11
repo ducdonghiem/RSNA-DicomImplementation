@@ -538,10 +538,6 @@ class BreastCancerTrainer:
     
     def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int) -> Dict[str, float]:
         """Train a single fold."""
-        # === 1. Compute class weights ===
-        targets = [label for _, label, _ in train_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
-        class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
-        weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
 
         # Combine model and patch_producer parameters
         params = list(self.model.parameters())
@@ -565,8 +561,20 @@ class BreastCancerTrainer:
         
         # Setup loss function
         if self.config['soft_label']:
-            criterion = nn.BCEWithLogitsLoss()
+            # criterion = nn.BCEWithLogitsLoss()
+            # Step 1: Compute the ratio of negatives to positives
+            pos_count = sum(y == 1 for _, y, _ in train_loader.dataset)
+            neg_count = sum(y == 0 for _, y, _ in train_loader.dataset)
+            pos_weight = torch.tensor([neg_count / pos_count], dtype=torch.float32).to(self.device)
+
+            # Step 2: Use in BCEWithLogitsLoss
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
         else:
+            # === 1. Compute class weights ===
+            targets = [label for _, label, _ in train_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
+            class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
+            weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
             criterion = nn.CrossEntropyLoss(weight=weight_tensor)   #  handle class imbalance by using class weights in the loss function to penalize the model more for misclassifying the minority class (cancer).
         
         # Training loop
