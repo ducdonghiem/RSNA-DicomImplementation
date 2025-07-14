@@ -654,7 +654,15 @@ class BreastCancerTrainer:
                 torch.save(self.model.state_dict(), model_path)
             else:
                 patience_counter += 1
-            
+                
+            # Add these debug statements IMMEDIATELY before your self.logger.info block
+            # print("--- DEBUGGING METRICS TYPES ---")
+            # for key, value in train_metrics.items():
+            #     print(f"Train Metric '{key}': Type={type(value)}, Value={value}")
+            # for key, value in val_metrics.items():
+            #     print(f"Val Metric '{key}': Type={type(value)}, Value={value}")
+            # print("-------------------------------")
+                        
             # Log progress
             self.logger.info(
                 f'Fold {fold} Epoch {epoch+1}: '
@@ -663,14 +671,14 @@ class BreastCancerTrainer:
                 f'Train Balanced Acc: {train_metrics["balanced_accuracy"]:.4f}, '
                 f'Train pF1: {train_metrics["pF1"]:.4f}, '
                 f'Train MacroF1: {train_metrics["macroF1"]:.4f}, '
-                f'Train AUC: {train_metrics.get("auc_roc", 0.0):.4f}, '
+                f'Train AUC: {train_metrics["auc_roc"]:.4f}, '
                 f'Train Recall: {train_metrics["recall"]:.4f}, '
                 f'Train Precision: {train_metrics["precision"]:.4f}, '
                 f'Val Acc: {val_metrics["accuracy"]:.4f}, '
                 f'Val Balanced Acc: {val_metrics["balanced_accuracy"]:.4f}, '
                 f'Val pF1: {val_metrics["pF1"]:.4f}, '
                 f'Val MacroF1: {val_metrics["macroF1"]:.4f}, '
-                f'Val AUC: {val_metrics.get("auc_roc", 0.0):.4f}, '
+                f'Val AUC: {val_metrics["auc_roc"]:.4f}, '
                 f'Val Recall: {val_metrics["recall"]:.4f}, '
                 f'Val Precision: {val_metrics["precision"]:.4f}'
             )

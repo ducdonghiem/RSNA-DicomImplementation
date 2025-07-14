@@ -9,7 +9,7 @@ class MetricsCalculator:
     def calculate_metrics(y_true: List[int], y_pred: List[int], y_prob: Optional[List[float]] = None) -> Dict[str, float]:
         """Calculate comprehensive metrics for binary classification."""
         metrics = {
-            'accuracy': sum(a == b for a, b in zip(y_true, y_pred)) / len(y_true),
+            'accuracy': float(sum(a == b for a, b in zip(y_true, y_pred))) / len(y_true),
             'balanced_accuracy': MetricsCalculator._balanced_accuracy_score(y_true, y_pred),
             'pF1': MetricsCalculator._f1_score(y_true, y_pred),
             'macroF1': MetricsCalculator._macro_f1_score(y_true, y_pred),
@@ -19,7 +19,7 @@ class MetricsCalculator:
         
         if y_prob is not None:
             try:
-                metrics['auc_roc'] = roc_auc_score(y_true, y_prob)
+                metrics['auc_roc'] = float(roc_auc_score(y_true, y_prob))
             except ValueError:
                 metrics['auc_roc'] = 0.0
                 
