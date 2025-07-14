@@ -23,6 +23,8 @@ import cv2
 
 from augs import CustomRandomSizedCropNoResize
 
+from FocalLoss import FocalLoss
+
 class BreastCancerTrainer:
     """Main trainer class for breast cancer detection models."""
     
@@ -96,7 +98,7 @@ class BreastCancerTrainer:
         ch.setFormatter(formatter)
 
         # File handler
-        fh = logging.FileHandler(f'{self.config['output_dir']}/training_log.txt', mode='a')  # append to file
+        fh = logging.FileHandler(f"{self.config['output_dir']}/training_log.txt", mode='a')  # append to file
         fh.setLevel(logging.INFO)
         fh.setFormatter(formatter)
 
@@ -296,7 +298,7 @@ class BreastCancerTrainer:
     
     def train_epoch(self, model: nn.Module, train_loader: DataLoader, 
                    optimizer: optim.Optimizer, criterion: nn.Module, 
-                   epoch: int) -> Tuple[float, Dict[str, float]]:
+                   epoch: int, warmup_steps: int) -> Tuple[float, Dict[str, float]]:
         """Train for one epoch."""
         model.train()
 
@@ -309,9 +311,19 @@ class BreastCancerTrainer:
         all_targets = []
         all_probs = []
         
-        pbar = tqdm(train_loader, desc=f'Epoch {epoch+1} [Train]')
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} [Train]")
         for batch_idx, (images, targets, metadata) in enumerate(pbar):
             images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
+
+            global_step = epoch * len(train_loader) + batch_idx         # current step, or current iteration, or current batch
+            # --- Learning Rate Warm-up Logic ---
+            if global_step < warmup_steps:
+                # Linearly increase LR from warmup_start_lr_factor * target_lr to target_lr
+                warmup_factor = global_step / warmup_steps
+                lr = self.config['learning_rate'] * (self.config['warmup_start_lr_factor'] + (1 - self.config['warmup_start_lr_factor']) * warmup_factor)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
+            # --- End Warm-up Logic ---
 
             optimizer.zero_grad()
             
@@ -333,11 +345,15 @@ class BreastCancerTrainer:
 
             loss.backward()
             optimizer.step()
+
+            # Print LR for monitoring (optional)
+            if global_step % 100 == 0: # Print every 100 steps
+                self.logger.info(f"LR MONITOR: Epoch: {epoch}, Step: {global_step}, LR: {optimizer.param_groups[0]['lr']:.6f}, Loss: {loss.item():.4f}")
             
             total_loss += loss.item()
             
             # Get predictions
-            if self.config['soft_label']:
+            if self.config['soft_label'] or self.config['focal_loss']:
                 probs = torch.sigmoid(outputs)            # Correct for BCEWithLogitsLoss
                 preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
             else:
@@ -347,7 +363,7 @@ class BreastCancerTrainer:
             all_preds.extend(preds.cpu().numpy())
             all_targets.extend(targets.cpu().numpy())
 
-            if self.config['soft_label']:
+            if self.config['soft_label'] or self.config['focal_loss']:
                 all_probs.extend(probs.detach().cpu().numpy())  # probs is already class 1
             else:
                 all_probs.extend(probs[:, 1].detach().cpu().numpy())  # take prob for class 1
@@ -402,7 +418,7 @@ class BreastCancerTrainer:
                 total_loss += loss.item()
                 
                 # Get predictions
-                if self.config['soft_label']:
+                if self.config['soft_label'] or self.config['focal_loss']:
                     probs = torch.sigmoid(outputs)            # Correct for BCEWithLogitsLoss
                     preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
                 else:
@@ -412,7 +428,7 @@ class BreastCancerTrainer:
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(targets.cpu().numpy())
 
-                if self.config['soft_label']:
+                if self.config['soft_label']or self.config['focal_loss']:
                     all_probs.extend(probs.detach().cpu().numpy())  # probs is already class 1
                 else:
                     all_probs.extend(probs[:, 1].detach().cpu().numpy())  # take prob for class 1
@@ -545,10 +561,16 @@ class BreastCancerTrainer:
             params += list(self.patch_producer.parameters())
 
         # Setup optimizer and scheduler
-        optimizer = optim.Adam(
+        # optimizer = optim.Adam(
+        #     params,
+        #     lr=self.config.get('learning_rate', 1e-4),
+        #     weight_decay=self.config.get('weight_decay', 1e-4)
+        # )
+
+        optimizer = optim.AdamW(
             params,
-            lr=self.config.get('learning_rate', 1e-4),
-            weight_decay=self.config.get('weight_decay', 1e-4)
+            lr=self.config['learning_rate'], # This will be our *target* LR after warm-up
+            weight_decay=self.config['weight_decay']
         )
         
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -561,32 +583,41 @@ class BreastCancerTrainer:
         
         # Setup loss function
         if self.config['soft_label']:
-            # criterion = nn.BCEWithLogitsLoss()
-            # Step 1: Compute the ratio of negatives to positives
-            pos_count = sum(y == 1 for _, y, _ in train_loader.dataset)
-            neg_count = sum(y == 0 for _, y, _ in train_loader.dataset)
-            pos_weight = torch.tensor([neg_count / pos_count], dtype=torch.float32).to(self.device)
-
-            # Step 2: Use in BCEWithLogitsLoss
-            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            if self.config['class_weight']:
+                # Step 1: Compute the ratio of negatives to positives
+                pos_count = sum(y == 1 for _, y, _ in train_loader.dataset)
+                neg_count = sum(y == 0 for _, y, _ in train_loader.dataset)
+                pos_weight = torch.tensor([neg_count / pos_count], dtype=torch.float32).to(self.device)
+    
+                # Step 2: Use in BCEWithLogitsLoss
+                criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            else:
+                criterion = nn.BCEWithLogitsLoss()
 
         else:
-            # === 1. Compute class weights ===
-            targets = [label for _, label, _ in train_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
-            class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
-            weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
-            criterion = nn.CrossEntropyLoss(weight=weight_tensor)   #  handle class imbalance by using class weights in the loss function to penalize the model more for misclassifying the minority class (cancer).
+            if self.config['focal_loss']:
+                criterion = FocalLoss(alpha=0.25, gamma=2) # Common starting point
+            elif self.config['class_weight']:
+                # === 1. Compute class weights ===
+                targets = [label for _, label, _ in train_loader.dataset]  # Assumes __getitem__ returns (image, label, meta)
+                class_weights = compute_class_weight(class_weight='balanced', classes=np.array([0, 1]), y=targets)
+                weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
+                criterion = nn.CrossEntropyLoss(weight=weight_tensor)   #  handle class imbalance by using class weights in the loss function to penalize the model more for misclassifying the minority class (cancer).
+            else:
+                criterion = nn.CrossEntropyLoss()
         
         # Training loop
         best_val_metrics = None
         best_val_score = 0
         patience_counter = 0
         max_patience = self.config.get('patience', 10)
+
+        warmup_steps = len(train_loader) * self.config['warmup_epochs']
         
-        for epoch in range(self.config.get('epochs', 50)):
+        for epoch in range(self.config['epochs']):
             # Train
             train_loss, train_metrics = self.train_epoch(
-                self.model, train_loader, optimizer, criterion, epoch
+                self.model, train_loader, optimizer, criterion, epoch, warmup_steps
             )
             
             # Validate
@@ -594,11 +625,22 @@ class BreastCancerTrainer:
                 self.model, val_loader, criterion, epoch
             )
             
-            # Update scheduler
-            scheduler.step(val_metrics[self.config['default_metric']])
-            
             # Check for improvement
-            val_score = val_metrics[self.config['default_metric']]
+            # Get validation score: average over selected default metrics
+            if isinstance(self.config['default_metric'], list):
+                val_score = np.mean([
+                    val_metrics[m] for m in self.config['default_metric'] if m in val_metrics
+                ])
+            else:
+                val_score = val_metrics[self.config['default_metric']]
+
+            # Update scheduler
+            # --- Scheduler Step (after each epoch) ---
+            # Only step the plateau scheduler after the warm-up period.
+            if epoch >= self.config['warmup_epochs']:
+                scheduler.step(val_score)
+            # --- End Scheduler Step ---
+
             if val_score > best_val_score:
                 best_val_score = val_score
                 best_val_metrics = val_metrics.copy()
@@ -621,14 +663,14 @@ class BreastCancerTrainer:
                 f'Train Balanced Acc: {train_metrics["balanced_accuracy"]:.4f}, '
                 f'Train pF1: {train_metrics["pF1"]:.4f}, '
                 f'Train MacroF1: {train_metrics["macroF1"]:.4f}, '
-                f'Train AUC: {train_metrics.get('auc_roc', 0.0):.4f}, '
+                f'Train AUC: {train_metrics.get("auc_roc", 0.0):.4f}, '
                 f'Train Recall: {train_metrics["recall"]:.4f}, '
                 f'Train Precision: {train_metrics["precision"]:.4f}, '
                 f'Val Acc: {val_metrics["accuracy"]:.4f}, '
                 f'Val Balanced Acc: {val_metrics["balanced_accuracy"]:.4f}, '
                 f'Val pF1: {val_metrics["pF1"]:.4f}, '
                 f'Val MacroF1: {val_metrics["macroF1"]:.4f}, '
-                f'Val AUC: {val_metrics.get('auc_roc', 0.0):.4f}, '
+                f'Val AUC: {val_metrics.get("auc_roc", 0.0):.4f}, '
                 f'Val Recall: {val_metrics["recall"]:.4f}, '
                 f'Val Precision: {val_metrics["precision"]:.4f}'
             )
@@ -835,7 +877,10 @@ class BreastCancerTrainer:
         if self.config['soft_label']:
             criterion = nn.BCEWithLogitsLoss()
         else:
-            criterion = nn.CrossEntropyLoss()
+            if self.config['focal_loss']:
+                criterion = FocalLoss(alpha=0.25, gamma=2) # Common starting point
+            else:
+                criterion = nn.CrossEntropyLoss()
         
         with torch.no_grad():
             pbar = tqdm(test_loader, desc='Test [Ensemble]')
@@ -863,7 +908,7 @@ class BreastCancerTrainer:
                 total_loss += loss.item()
 
                 # Get predictions
-                if self.config['soft_label']:
+                if self.config['soft_label'] or self.config['focal_loss']:
                     probs = torch.sigmoid(ensemble_outputs)            # Correct for BCEWithLogitsLoss
                     preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
                 else:
@@ -873,7 +918,7 @@ class BreastCancerTrainer:
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(targets.cpu().numpy())
 
-                if self.config['soft_label']:
+                if self.config['soft_label'] or self.config['focal_loss']:
                     all_probs.extend(probs.detach().cpu().numpy())  # probs is already class 1
                 else:
                     all_probs.extend(probs[:, 1].cpu().numpy())  # take prob for class 1

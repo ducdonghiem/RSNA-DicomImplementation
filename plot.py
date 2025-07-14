@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 # arr = np.load("../processed_data/25/1997933901.npy")
 
 # arr = np.load("../../processed_data/48042/599175404.npy")
-arr = np.load("../../processed_data/10226/461614796.npy")
-# arr = np.load("../../processed_data/10130/388811999.npy")
+# arr = np.load("../../processed_data/10226/461614796.npy")
+arr = np.load("../../processed_data/10130/388811999.npy")
 
 print(arr.shape, arr.dtype)     # (512, 512), float32
 
