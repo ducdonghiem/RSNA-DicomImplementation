@@ -1,3 +1,11 @@
+import matplotlib
+matplotlib.use('Agg') # This must be called BEFORE importing pyplot
+import matplotlib.pyplot as plt
+
+# Calculate Precision-Recall curve points
+from sklearn.metrics import precision_recall_curve, balanced_accuracy_score
+# Evaluate with the new optimal threshold on the combined validation data (optional, but good for reporting)
+
 from typing import Dict, List, Tuple, Optional, Union
 import os
 import json
@@ -381,7 +389,7 @@ class BreastCancerTrainer:
     
     # appends results from a batch (32 scans) to the full list then compute the metrics after the loop (inference one batch at a time to save memory)
     def validate_epoch(self, model: nn.Module, val_loader: DataLoader, 
-                      criterion: nn.Module, epoch: int) -> Tuple[float, Dict[str, float]]:
+                      criterion: nn.Module, epoch: int) -> Tuple[float, Dict[str, float], List[int], List[float]]:
         """Validate for one epoch."""
         model.eval()
 
@@ -442,7 +450,7 @@ class BreastCancerTrainer:
         avg_loss = total_loss / len(val_loader)
         metrics = MetricsCalculator.calculate_metrics(all_targets, all_preds, all_probs)
         
-        return avg_loss, metrics
+        return avg_loss, metrics, all_targets, all_probs
     
     def train_with_kfold(self, csv_path: str, data_root: str, k_folds: int = 5) -> Dict[str, List[float]]:
         """
@@ -490,6 +498,10 @@ class BreastCancerTrainer:
             'val_recall': [],
             'val_precision': []
         }
+
+        # Add new lists to store true labels and probabilities across all folds for final tuning
+        all_folds_true_labels = []
+        all_folds_predicted_probs = []
         
         # for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df)):
         for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df, train_df[self.config['target_col']])):        # for balance between folds
@@ -531,8 +543,8 @@ class BreastCancerTrainer:
             )
             self.model.to(self.device)
             
-            # Train fold
-            best_val_metrics = self._train_fold(fold_train_loader, fold_val_loader, fold + 1)
+            # Train fold (Catch the new returns)
+            best_val_metrics, fold_true_labels, fold_predicted_probs = self._train_fold(fold_train_loader, fold_val_loader, fold + 1)
             
             # Store results
             fold_results['fold'].append(fold + 1)
@@ -543,16 +555,60 @@ class BreastCancerTrainer:
             fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
             fold_results['val_recall'].append(best_val_metrics['recall'])
             fold_results['val_precision'].append(best_val_metrics['precision'])
+
+            # --- Store true labels and probabilities for this fold ---
+            all_folds_true_labels.append(fold_true_labels)
+            all_folds_predicted_probs.append(fold_predicted_probs)
         
         # Print fold results
         self._print_fold_results(fold_results)
+
+        # --- POST-TRAINING THRESHOLD TUNING AND PR CURVE PLOTTING ---
+        self.logger.info("Performing post-training threshold tuning and PR curve analysis...")
+
+        # Concatenate all true labels and probabilities from validation sets across folds
+        # This gives you a large, representative dataset for tuning
+        combined_true_labels = [label for sublist in all_folds_true_labels for label in sublist]
+        combined_predicted_probs = [prob for sublist in all_folds_predicted_probs for prob in sublist]
+
+        precisions, recalls, thresholds = precision_recall_curve(combined_true_labels, combined_predicted_probs)
+
+        # Find the threshold that maximizes a desired metric (e.g., F1-score)
+        # (You can choose to maximize something else, like balanced accuracy or recall at a certain precision)
+        f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-10) # Add epsilon to avoid division by zero
+        optimal_idx = np.argmax(f1_scores)
+        optimal_threshold = thresholds[optimal_idx]
+        optimal_f1_score = f1_scores[optimal_idx]
+        optimal_precision = precisions[optimal_idx]
+        optimal_recall = recalls[optimal_idx]
+
+        self.logger.info(f"Optimal Threshold (maximizing F1): {optimal_threshold:.4f}")
+        self.logger.info(f"Optimal F1-Score at this threshold: {optimal_f1_score:.4f}")
+        self.logger.info(f"Precision at optimal threshold: {optimal_precision:.4f}")
+        self.logger.info(f"Recall at optimal threshold: {optimal_recall:.4f}")
+
+        # Plotting the PR curve (Optional, requires matplotlib)
+        plt.figure(figsize=(8, 6))
+        plt.plot(recalls, precisions, marker='.')
+        plt.plot(optimal_recall, optimal_precision, 'ro', markersize=8, label=f'Optimal (F1) Threshold: {optimal_threshold:.2f}')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curve (Combined Validation Folds)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(os.path.join(self.config.get('output_dir', 'outputs'), 'pr_curve_combined_validation.png'))
+        plt.close()
+
+        combined_preds_at_optimal_threshold = (np.array(combined_predicted_probs) >= optimal_threshold).astype(int)
+        optimal_bal_acc = balanced_accuracy_score(combined_true_labels, combined_preds_at_optimal_threshold)
+        self.logger.info(f"Balanced Accuracy at optimal threshold: {optimal_bal_acc:.4f}")
         
         # Final evaluation on test set
-        self._final_test_evaluation(test_df, data_root)
+        self._final_test_evaluation(test_df, data_root, optimal_threshold)
         
         return fold_results
     
-    def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int) -> Dict[str, float]:
+    def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int) -> Tuple[Dict[str, float], List[int], List[float]]:
         """Train a single fold."""
 
         # Combine model and patch_producer parameters
@@ -613,6 +669,12 @@ class BreastCancerTrainer:
         max_patience = self.config.get('patience', 10)
 
         warmup_steps = len(train_loader) * self.config['warmup_epochs']
+
+        # Add these new lists to store true labels and probabilities for the best model of the fold
+        best_val_true_labels = []
+        best_val_predicted_probs = []
+
+        previous_best_model_path = None # Will store the path of the last saved best model for deletion
         
         for epoch in range(self.config['epochs']):
             # Train
@@ -621,7 +683,7 @@ class BreastCancerTrainer:
             )
             
             # Validate
-            val_loss, val_metrics = self.validate_epoch(
+            val_loss, val_metrics, current_val_true, current_val_probs = self.validate_epoch(
                 self.model, val_loader, criterion, epoch
             )
             
@@ -645,13 +707,29 @@ class BreastCancerTrainer:
                 best_val_score = val_score
                 best_val_metrics = val_metrics.copy()
                 patience_counter = 0
+
+                # --- Delete previous best model if it exists ---
+                if previous_best_model_path and os.path.exists(previous_best_model_path):
+                    try:
+                        os.remove(previous_best_model_path)
+                        self.logger.info(f"Deleted old best model: {previous_best_model_path}")
+                    except OSError as e:
+                        self.logger.warning(f"Error deleting old best model {previous_best_model_path}: {e}")
                 
                 # Save best model
                 model_path = os.path.join(
                     self.config.get('output_dir', 'outputs'), 
-                    f'best_model_fold_{fold}.pth'
+                    f'best_model_fold_{fold}_epoch_{epoch+1}.pth' # Added _epoch_{epoch+1}
                 )
                 torch.save(self.model.state_dict(), model_path)
+                self.logger.info(f"Saved new best model: {model_path}")
+
+                # Update the path to the newly saved model
+                previous_best_model_path = model_path
+                
+                # --- Store these for threshold tuning later ---
+                best_val_true_labels = current_val_true
+                best_val_predicted_probs = current_val_probs
             else:
                 patience_counter += 1
                 
@@ -722,7 +800,9 @@ class BreastCancerTrainer:
                 self.logger.info(f'Early stopping triggered at epoch {epoch+1}')
                 break
         
-        return best_val_metrics
+        # Currently: return best_val_metrics
+        # New: return best_val_metrics, best_val_true_labels, best_val_predicted_probs
+        return best_val_metrics, best_val_true_labels, best_val_predicted_probs
     
     def _print_fold_results(self, fold_results: Dict[str, List[float]]):
         """Print summary of fold results."""
@@ -832,7 +912,7 @@ class BreastCancerTrainer:
     #     self.logger.info(f"Results saved to {results_path}")
 
     # ensemble all 5 models
-    def _final_test_evaluation(self, test_df: pd.DataFrame, data_root: str):
+    def _final_test_evaluation(self, test_df: pd.DataFrame, data_root: str, optimal_threshold: float):
         """Evaluate on final test set using ensemble of all fold models."""
         self.logger.info("\nFinal Test Set Evaluation")
         self.logger.info("-" * 30)
@@ -918,7 +998,8 @@ class BreastCancerTrainer:
                 # Get predictions
                 if self.config['soft_label'] or self.config['focal_loss']:
                     probs = torch.sigmoid(ensemble_outputs)            # Correct for BCEWithLogitsLoss
-                    preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
+                    # preds = (probs >= self.config['threshold']).long()             # or tune this threshold if needed
+                    preds = (probs >= optimal_threshold).long()
                 else:
                     probs = torch.softmax(ensemble_outputs, dim=1)
                     preds = torch.argmax(ensemble_outputs, dim=1)

@@ -2,7 +2,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Replace with your actual CSV file path
-csv_file = '../outputs/fold_5_metrics.csv'
+# csv_file = '../outputs4-efficientnetb0/fold_4_metrics.csv'
+
+# csv_file = '../fold_5_metrics_50epochs.csv'
+csv_file = '../fold_5_metrics.csv'
 
 # Read the CSV
 df = pd.read_csv(csv_file)
@@ -17,6 +20,9 @@ val_loss = df['Val Loss']
 
 # train_loss = df['Train MacroF1']
 # val_loss = df['Val MacroF1']
+
+# train_loss = df['Train pF1']
+# val_loss = df['Val pF1']
 
 # Plot the losses
 plt.figure(figsize=(8, 5))
