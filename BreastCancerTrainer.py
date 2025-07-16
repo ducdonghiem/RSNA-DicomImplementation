@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import precision_recall_curve, balanced_accuracy_score
 # Evaluate with the new optimal threshold on the combined validation data (optional, but good for reporting)
 
+import glob
+
 from typing import Dict, List, Tuple, Optional, Union
 import os
 import json
@@ -934,10 +936,28 @@ class BreastCancerTrainer:
         models = []
         k_folds = self.config.get("k_folds", 5)
         for fold in range(1, k_folds + 1):
-            model_path = os.path.join(
-                self.config.get('output_dir', 'outputs'), 
-                f'best_model_fold_{fold}.pth'
+            # Assuming only ONE such file exists per fold due to your saving/deletion logic
+            search_pattern = os.path.join(
+                self.config.get('output_dir', 'outputs'),
+                f'best_model_fold_{fold}_epoch_*.pth'
             )
+
+            # Find all files matching the pattern.
+            # We expect this list to contain at most one file.
+            found_models = glob.glob(search_pattern)
+
+            if not found_models:
+                self.logger.warning(f"No best model found for fold {fold} matching pattern '{search_pattern}'. Skipping.")
+                continue # Skip to the next fold if no model is found
+
+            if len(found_models) > 1:
+                self.logger.warning(f"Multiple best models found for fold {fold}: {found_models}. Loading the first one found.")
+                # If this happens, your deletion logic might not be working as intended.
+                # For now, we'll just pick the first one.
+                model_path = found_models[0]
+            else:
+                model_path = found_models[0]
+
             if os.path.exists(model_path):
                 # fold_model = type(self.model)()  # Create new instance
                 fold_model = ModelFactory.create_model(
