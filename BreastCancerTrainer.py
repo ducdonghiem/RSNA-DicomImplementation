@@ -624,7 +624,7 @@ class BreastCancerTrainer:
                 
                 if latest_model_path:
                     self.logger.info(f"Loading best model for completed Fold {fold_idx+1} from {latest_model_path}")
-                    model_for_eval.load_state_dict(torch.load(latest_model_path, map_location=self.device))
+                    model_for_eval.load_state_dict(torch.load(latest_model_path, map_location=self.device)['model_state_dict'])
                     model_for_eval.to(self.device)
                     # model_for_eval.eval()
 
@@ -839,10 +839,9 @@ class BreastCancerTrainer:
             if resume_model_path:
                 self.logger.info(f"Loading checkpoint for Fold {fold} from {resume_model_path}")
                 checkpoint = torch.load(resume_model_path, map_location=self.device)
-                self.model.load_state_dict(checkpoint)
-                # Note: We are not saving/loading optimizer state currently.
+                self.model.load_state_dict(checkpoint['model_state_dict'])
                 # For true resume, you'd save optimizer.state_dict() and load it here.
-                # Example: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 # This requires saving optimizer state in the checkpoint.
             else:
                 self.logger.warning(f"No suitable checkpoint found for Fold {fold} to resume from epoch {start_epoch}. Starting fold from scratch.")
@@ -960,12 +959,12 @@ class BreastCancerTrainer:
                     f'best_model_fold_{fold}_epoch_{epoch+1}.pth' # Added _epoch_{epoch+1}
                 )
                 # For true resume, you should also save optimizer state:
-                # torch.save({
-                #     'model_state_dict': self.model.state_dict(),
-                #     'optimizer_state_dict': optimizer.state_dict(),
-                #     'epoch': epoch
-                # }, model_path)
-                torch.save(self.model.state_dict(), model_path)
+                torch.save({
+                    'model_state_dict': self.model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'epoch': epoch
+                }, model_path)
+                # torch.save(self.model.state_dict(), model_path)
                 self.logger.info(f"Saved new best model: {model_path}")
 
                 # Update the path to the newly saved model
@@ -1212,7 +1211,7 @@ class BreastCancerTrainer:
                     num_classes=self.config.get('num_classes', 2),
                     pretrained=False
                 )
-                fold_model.load_state_dict(torch.load(model_path))
+                fold_model.load_state_dict(torch.load(model_path, map_location=self.device)['model_state_dict'])
                 fold_model.to(self.device)
                 fold_model.eval()
 
