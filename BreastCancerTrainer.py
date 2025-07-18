@@ -7,6 +7,7 @@ from sklearn.metrics import precision_recall_curve, balanced_accuracy_score
 # Evaluate with the new optimal threshold on the combined validation data (optional, but good for reporting)
 
 import glob
+import re # For parsing epoch from filenames
 
 from typing import Dict, List, Tuple, Optional, Union
 import os
@@ -80,6 +81,17 @@ class BreastCancerTrainer:
             'val_loss': [],
             'train_metrics': [],
             'val_metrics': []
+        }
+
+        # In BreastCancerTrainer class or as a global constant
+        self.METRIC_TO_CSV_COL_MAP = {
+            'accuracy': 'Acc',
+            'balanced_accuracy': 'Balanced Acc',
+            'pF1': 'pF1',          # This ensures 'pF1' remains 'pF1'
+            'macroF1': 'MacroF1',  # This ensures 'MacroF1' remains 'MacroF1'
+            'auc_roc': 'AUC',
+            'recall': 'Recall',
+            'precision': 'Precision'
         }
         
         self.logger.info(f"Trainer initialized with model: {config['model_name']}")
@@ -305,6 +317,36 @@ class BreastCancerTrainer:
         self.logger.info(f"Test samples: {len(test_dataset)}")
         
         return train_loader, test_loader
+
+    def _find_resume_point(self, output_dir: str) -> Tuple[int, int]:
+        """
+        Scans the output directory to find the last completed fold and epoch.
+        Returns (resume_fold_idx, resume_epoch_idx) (0-indexed fold, 0-indexed epoch)
+        """
+        latest_fold = -1
+        latest_epoch_in_fold = -1
+
+        # 1. Check for best_model_fold_X_epoch_Y.pth files
+        model_files = glob.glob(os.path.join(output_dir, 'best_model_fold_*_epoch_*.pth'))
+        
+        for fpath in model_files:
+            match = re.search(r'best_model_fold_(\d+)_epoch_(\d+)\.pth$', fpath)
+            if match:
+                fold_num = int(match.group(1)) - 1 # Convert to 0-indexed fold
+                epoch_num = int(match.group(2)) - 1 # Convert to 0-indexed epoch
+                
+                if fold_num > latest_fold:
+                    latest_fold = fold_num
+                    latest_epoch_in_fold = epoch_num
+                elif fold_num == latest_fold and epoch_num > latest_epoch_in_fold:
+                    latest_epoch_in_fold = epoch_num
+
+        if latest_fold != -1:
+            self.logger.info(f"Resuming from Fold {latest_fold + 1}, Epoch {latest_epoch_in_fold + 1}")
+            return latest_fold, latest_epoch_in_fold + 1 # Return 1-indexed epoch for loop range
+        else:
+            self.logger.info("No previous checkpoints found. Starting from scratch.")
+            return 0, 0 # Start from fold 0, epoch 0
     
     def train_epoch(self, model: nn.Module, train_loader: DataLoader, 
                    optimizer: optim.Optimizer, criterion: nn.Module, 
@@ -357,7 +399,7 @@ class BreastCancerTrainer:
             optimizer.step()
 
             # Print LR for monitoring (optional)
-            if global_step % 100 == 0: # Print every 100 steps
+            if global_step % 400 == 0: # Print every 400 steps
                 self.logger.info(f"LR MONITOR: Epoch: {epoch}, Step: {global_step}, LR: {optimizer.param_groups[0]['lr']:.6f}, Loss: {loss.item():.4f}")
             
             total_loss += loss.item()
@@ -454,7 +496,7 @@ class BreastCancerTrainer:
         
         return avg_loss, metrics, all_targets, all_probs
     
-    def train_with_kfold(self, csv_path: str, data_root: str, k_folds: int = 5) -> Dict[str, List[float]]:
+    def train_with_kfold(self, csv_path: str, data_root: str, k_folds: int = 5, resume: bool = False) -> Dict[str, List[float]]:
         """
         Train model using K-fold cross validation.
         
@@ -501,62 +543,197 @@ class BreastCancerTrainer:
             'val_precision': []
         }
 
+        start_fold_idx = 0
+        start_epoch_idx = 0
+
+        if resume:
+            start_fold_idx, start_epoch_idx = self._find_resume_point(self.config.get('output_dir', 'outputs'))
+            # If resuming a fold, we need to load its previous results into fold_results
+            if start_fold_idx > 0: # If not starting from the very first fold
+                for f_idx in range(start_fold_idx):
+                    csv_file = f"{self.config['output_dir']}/fold_{f_idx+1}_metrics.csv"
+                    if os.path.exists(csv_file):
+                        df_metrics = pd.read_csv(csv_file)
+                        last_row = df_metrics.iloc[-1] # Get metrics from the last epoch of completed folds
+                        fold_results['fold'].append(f_idx + 1)
+                        fold_results['val_accuracy'].append(last_row['Val Acc'])
+                        fold_results['val_balanced_accuracy'].append(last_row['Val Balanced Acc'])
+                        fold_results['val_pF1'].append(last_row['Val pF1'])
+                        fold_results['val_macroF1'].append(last_row['Val MacroF1'])
+                        fold_results['val_auc_roc'].append(last_row['Val AUC'])
+                        fold_results['val_recall'].append(last_row['Val Recall'])
+                        fold_results['val_precision'].append(last_row['Val Precision']) 
+                    else:
+                        self.logger.warning(f"Metrics CSV for completed fold {f_idx+1} not found: {csv_file}")
+
         # Add new lists to store true labels and probabilities across all folds for final tuning
         all_folds_true_labels = []
         all_folds_predicted_probs = []
         
         # for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df)):
-        for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df, train_df[self.config['target_col']])):        # for balance between folds
+        for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(train_df, train_df[self.config['target_col']])):     # for balance between folds
+            current_fold_start_epoch = 0
+            fold_true_labels = []
+            fold_predicted_probs = []
 
-            self.logger.info(f"Starting Fold {fold + 1}/{k_folds}")
+            if resume and fold_idx < start_fold_idx:
+                # This fold was completed in a previous run. Load its best model and re-evaluate its validation set.
+                self.logger.info(f"Processing completed Fold {fold_idx + 1} for metrics collection...")
+
+                # Load pre-saved fold splits
+                fold_val_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold_idx+1}_val.csv')
+                if not os.path.exists(fold_val_path):
+                    self.logger.error(f"Validation CSV for completed fold {fold_idx+1} not found at {fold_val_path}. Cannot collect metrics.")
+                    continue # Skip this fold if data is missing
+                
+                # fold_val_df = pd.read_csv(fold_val_path)
+                # Corrected: Pass df as keyword argument
+                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+                fold_val_loader = DataLoader(
+                    fold_val_dataset, 
+                    batch_size=self.config.get('batch_size', 32),
+                    shuffle=False, 
+                    num_workers=self.config.get('num_workers', 4)
+                )
+
+                # Load the best model for this completed fold
+                model_for_eval = ModelFactory.create_model(
+                    self.config['model_name'], 
+                    num_classes=self.config.get('num_classes', 1),
+                    pretrained=self.config.get('pretrained', True)
+                )
+                
+                # Find the best model for this fold (highest epoch)
+                search_pattern = os.path.join(self.config.get('output_dir', 'outputs'), f'best_model_fold_{fold_idx+1}_epoch_*.pth')
+                found_models = glob.glob(search_pattern)
+                
+                if not found_models:
+                    self.logger.warning(f"No best model found for completed fold {fold_idx+1} at '{search_pattern}'. Skipping metrics collection for this fold.")
+                    continue
+                
+                # Assume the highest epoch model is the best one for a completed fold
+                latest_model_path = None
+                max_epoch = -1
+                for model_file in found_models:
+                    match = re.search(r'_epoch_(\d+)\.pth$', model_file)
+                    if match:
+                        epoch_num = int(match.group(1))
+                        if epoch_num > max_epoch:
+                            max_epoch = epoch_num
+                            latest_model_path = model_file
+                
+                if latest_model_path:
+                    self.logger.info(f"Loading best model for completed Fold {fold_idx+1} from {latest_model_path}")
+                    model_for_eval.load_state_dict(torch.load(latest_model_path, map_location=self.device))
+                    model_for_eval.to(self.device)
+                    # model_for_eval.eval()
+
+                    # Re-run validation inference to get true labels and probabilities
+                    _, _, fold_true_labels, fold_predicted_probs = self.validate_epoch(
+                        model_for_eval, fold_val_loader, FocalLoss(), 0 # Criterion and epoch don't matter for just getting predictions
+                    )
+                else:
+                    self.logger.warning(f"Could not load best model for completed Fold {fold_idx+1}. Skipping metrics collection.")
+                    continue
+
+            elif resume and fold_idx == start_fold_idx:                          
+                # This is the fold to resume training for
+                current_fold_start_epoch = start_epoch_idx
+                self.logger.info(f"Resuming Fold {fold_idx + 1} from Epoch {current_fold_start_epoch + 1}")
+                
+                # Load pre-saved fold splits for resuming
+                fold_train_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold_idx+1}_train.csv')
+                fold_val_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold_idx+1}_val.csv')
+                
+                if not os.path.exists(fold_train_path) or not os.path.exists(fold_val_path):
+                    self.logger.error(f"Resume failed: Training/Validation CSVs for fold {fold_idx+1} not found.")
+                    raise FileNotFoundError(f"Missing resume data for fold {fold_idx+1}")
+                
+                # fold_train_df = pd.read_csv(fold_train_path)
+                # fold_val_df = pd.read_csv(fold_val_path)
+
+                # Corrected: Pass df as keyword argument
+                fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'))
+                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+                
+                fold_train_loader = DataLoader(
+                    fold_train_dataset, 
+                    batch_size=self.config.get('batch_size', 32),
+                    shuffle=True, 
+                    num_workers=self.config.get('num_workers', 4)
+                )
+                fold_val_loader = DataLoader(
+                    fold_val_dataset, 
+                    batch_size=self.config.get('batch_size', 32),
+                    shuffle=False, 
+                    num_workers=self.config.get('num_workers', 4)
+                )
+                
+                # Reinitialize model for each fold (or load checkpoint if resuming)
+                self.model = ModelFactory.create_model(
+                    self.config['model_name'], 
+                    num_classes=self.config.get('num_classes', 1), # Changed to 1
+                    pretrained=self.config.get('pretrained', True)
+                )
+                self.model.to(self.device)
+                
+                # Train fold
+                best_val_metrics, fold_true_labels, fold_predicted_probs = self._train_fold(
+                    fold_train_loader, fold_val_loader, fold_idx + 1, start_epoch=current_fold_start_epoch
+                )
+
+            else: # This block handles both fresh runs (resume=False) and new folds after a resume point
+                self.logger.info(f"Starting Fold {fold_idx + 1}/{k_folds}")
+                # For new folds, generate splits as usual
+                fold_train_df = train_df.iloc[train_idx].reset_index(drop=True)
+                fold_val_df = train_df.iloc[val_idx].reset_index(drop=True)
+                
+                # Save fold splits (only for new folds, or if not resuming this specific fold)
+                fold_train_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold_idx+1}_train.csv')
+                fold_val_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold_idx+1}_val.csv')
+                fold_train_df.to_csv(fold_train_path, index=False)
+                fold_val_df.to_csv(fold_val_path, index=False)
             
-            # Create fold datasets
-            fold_train_df = train_df.iloc[train_idx].reset_index(drop=True)
-            fold_val_df = train_df.iloc[val_idx].reset_index(drop=True)
-            
-            # Save fold splits
-            fold_train_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold+1}_train.csv')
-            fold_val_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold+1}_val.csv')
-            fold_train_df.to_csv(fold_train_path, index=False)
-            fold_val_df.to_csv(fold_val_path, index=False)
-            
-            # Create datasets and loaders
-            fold_train_dataset = BreastCancerDataset(fold_train_path, data_root, self.train_transform)
-            fold_val_dataset = BreastCancerDataset(fold_val_path, data_root, self.val_transform)
-            
-            fold_train_loader = DataLoader(
-                fold_train_dataset, 
-                batch_size=self.config.get('batch_size', 32),
-                shuffle=True, 
-                num_workers=self.config.get('num_workers', 4)
-            )
-            fold_val_loader = DataLoader(
-                fold_val_dataset, 
-                batch_size=self.config.get('batch_size', 32),
-                shuffle=False, 
-                num_workers=self.config.get('num_workers', 4)
-            )
-            
-            # Reinitialize model for each fold
-            self.model = ModelFactory.create_model(
-                self.config['model_name'], 
-                num_classes=self.config.get('num_classes', 2),
-                pretrained=self.config.get('pretrained', True)
-            )
-            self.model.to(self.device)
-            
-            # Train fold (Catch the new returns)
-            best_val_metrics, fold_true_labels, fold_predicted_probs = self._train_fold(fold_train_loader, fold_val_loader, fold + 1)
-            
-            # Store results
-            fold_results['fold'].append(fold + 1)
-            fold_results['val_accuracy'].append(best_val_metrics['accuracy'])
-            fold_results['val_balanced_accuracy'].append(best_val_metrics['balanced_accuracy'])
-            fold_results['val_pF1'].append(best_val_metrics['pF1'])
-            fold_results['val_macroF1'].append(best_val_metrics['macroF1'])
-            fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
-            fold_results['val_recall'].append(best_val_metrics['recall'])
-            fold_results['val_precision'].append(best_val_metrics['precision'])
+                # Corrected: Pass csv_path as keyword argument
+                fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'))
+                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+                
+                fold_train_loader = DataLoader(
+                    fold_train_dataset, 
+                    batch_size=self.config.get('batch_size', 32),
+                    shuffle=True, 
+                    num_workers=self.config.get('num_workers', 4)
+                )
+                fold_val_loader = DataLoader(
+                    fold_val_dataset, 
+                    batch_size=self.config.get('batch_size', 32),
+                    shuffle=False, 
+                    num_workers=self.config.get('num_workers', 4)
+                )
+                
+                # Reinitialize model for each fold (or load checkpoint if resuming)
+                self.model = ModelFactory.create_model(
+                    self.config['model_name'], 
+                    num_classes=self.config.get('num_classes', 1), # Changed to 1
+                    pretrained=self.config.get('pretrained', True)
+                )
+                self.model.to(self.device)
+                
+                # Train fold
+                best_val_metrics, fold_true_labels, fold_predicted_probs = self._train_fold(
+                    fold_train_loader, fold_val_loader, fold_idx + 1, start_epoch=current_fold_start_epoch
+                )
+
+            if not (resume and fold_idx < start_fold_idx) and best_val_metrics is not None:
+                # Store results
+                fold_results['fold'].append(fold_idx + 1)
+                fold_results['val_accuracy'].append(best_val_metrics['accuracy'])
+                fold_results['val_balanced_accuracy'].append(best_val_metrics['balanced_accuracy'])
+                fold_results['val_pF1'].append(best_val_metrics['pF1'])
+                fold_results['val_macroF1'].append(best_val_metrics['macroF1'])
+                fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
+                fold_results['val_recall'].append(best_val_metrics['recall'])
+                fold_results['val_precision'].append(best_val_metrics['precision'])
 
             # --- Store true labels and probabilities for this fold ---
             all_folds_true_labels.append(fold_true_labels)
@@ -610,7 +787,7 @@ class BreastCancerTrainer:
         
         return fold_results
     
-    def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int) -> Tuple[Dict[str, float], List[int], List[float]]:
+    def _train_fold(self, train_loader: DataLoader, val_loader: DataLoader, fold: int, start_epoch: int = 0) -> Tuple[Dict[str, float], List[int], List[float]]:
         """Train a single fold."""
 
         # Combine model and patch_producer parameters
@@ -630,6 +807,39 @@ class BreastCancerTrainer:
             lr=self.config['learning_rate'], # This will be our *target* LR after warm-up
             weight_decay=self.config['weight_decay']
         )
+
+        # Load model and optimizer state if resuming this fold
+        if start_epoch > 0:
+            # Find the checkpoint for this fold and epoch
+            checkpoint_pattern = os.path.join(
+                self.config.get('output_dir', 'outputs'),
+                f'best_model_fold_{fold}_epoch_*.pth'
+            )
+            found_checkpoints = glob.glob(checkpoint_pattern)
+            
+            # Find the checkpoint with the highest epoch number up to start_epoch - 1
+            # (since start_epoch is the epoch we *start* training, so we need the model from before it)
+            resume_model_path = None
+            max_found_epoch = -1
+            for cp_path in found_checkpoints:
+                match = re.search(r'_epoch_(\d+)\.pth$', cp_path)
+                if match:
+                    cp_epoch = int(match.group(1)) - 1 # 0-indexed epoch
+                    if cp_epoch < start_epoch and cp_epoch > max_found_epoch:
+                        max_found_epoch = cp_epoch
+                        resume_model_path = cp_path
+            
+            if resume_model_path:
+                self.logger.info(f"Loading checkpoint for Fold {fold} from {resume_model_path}")
+                checkpoint = torch.load(resume_model_path, map_location=self.device)
+                self.model.load_state_dict(checkpoint)
+                # Note: We are not saving/loading optimizer state currently.
+                # For true resume, you'd save optimizer.state_dict() and load it here.
+                # Example: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                # This requires saving optimizer state in the checkpoint.
+            else:
+                self.logger.warning(f"No suitable checkpoint found for Fold {fold} to resume from epoch {start_epoch}. Starting fold from scratch.")
+                start_epoch = 0 # Reset to 0 if no checkpoint found
         
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, 
@@ -676,9 +886,28 @@ class BreastCancerTrainer:
         best_val_true_labels = []
         best_val_predicted_probs = []
 
-        previous_best_model_path = None # Will store the path of the last saved best model for deletion
+        previous_best_model_path = None # Will store the path of the last saved best model for deletio
+
+        # If resuming, find the path of the model saved at max_found_epoch
+        if start_epoch > 0 and resume_model_path:
+            previous_best_model_path = resume_model_path
+            # Also, load the best_val_score from the CSV for this fold up to max_found_epoch
+            csv_file = f"{self.config['output_dir']}/fold_{fold}_metrics.csv"
+            if os.path.exists(csv_file):
+                df_metrics = pd.read_csv(csv_file)
+                if not df_metrics.empty:
+                    # Find the row corresponding to max_found_epoch + 1 (1-indexed epoch)
+                    best_epoch_row = df_metrics[df_metrics['Epoch'] == max_found_epoch + 1]
+                    if not best_epoch_row.empty:
+                        # Assuming default_metric is in val_metrics 
+                        # Use the mapping to get the correct CSV column name
+                        csv_metric_name = self.METRIC_TO_CSV_COL_MAP.get(self.config['default_metric'], self.config['default_metric'])
+                        column_key = f"Val {csv_metric_name}"
+                        best_val_score = best_epoch_row[column_key].iloc[0]
+                        self.logger.info(f"Loaded best_val_score for Fold {fold} from CSV: {best_val_score:.4f}")
         
-        for epoch in range(self.config['epochs']):
+        # Epoch loop starts from start_epoch
+        for epoch in range(start_epoch, self.config['epochs']):
             # Train
             train_loss, train_metrics = self.train_epoch(
                 self.model, train_loader, optimizer, criterion, epoch, warmup_steps
@@ -723,6 +952,12 @@ class BreastCancerTrainer:
                     self.config.get('output_dir', 'outputs'), 
                     f'best_model_fold_{fold}_epoch_{epoch+1}.pth' # Added _epoch_{epoch+1}
                 )
+                # For true resume, you should also save optimizer state:
+                # torch.save({
+                #     'model_state_dict': self.model.state_dict(),
+                #     'optimizer_state_dict': optimizer.state_dict(),
+                #     'epoch': epoch
+                # }, model_path)
                 torch.save(self.model.state_dict(), model_path)
                 self.logger.info(f"Saved new best model: {model_path}")
 
@@ -766,8 +1001,11 @@ class BreastCancerTrainer:
             # CSV file path for the current fold
             csv_file = f"{self.config['output_dir']}/fold_{fold}_metrics.csv"
 
-            # If this is the first epoch, create the file and write the header
-            if epoch == 0 and not os.path.exists(csv_file):
+            # If this is the first epoch being written for this fold, create the file and write the header
+            # Or if resuming and this is the first epoch of the resume, ensure header is there if file is new
+            # If file exists and we are resuming, we append.
+            write_header = not os.path.exists(csv_file)
+            if write_header:
                 with open(csv_file, mode='w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([
@@ -924,7 +1162,9 @@ class BreastCancerTrainer:
         test_df.to_csv(test_path, index=False)
         
         # Create test dataset
-        test_dataset = BreastCancerDataset(test_path, data_root, self.val_transform)
+        # test_dataset = BreastCancerDataset(test_path, data_root, self.val_transform)
+        test_dataset = BreastCancerDataset(csv_path=test_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+
         test_loader = DataLoader(
             test_dataset, 
             batch_size=self.config.get('batch_size', 32),
@@ -941,15 +1181,15 @@ class BreastCancerTrainer:
                 self.config.get('output_dir', 'outputs'),
                 f'best_model_fold_{fold}_epoch_*.pth'
             )
-
+        
             # Find all files matching the pattern.
             # We expect this list to contain at most one file.
             found_models = glob.glob(search_pattern)
-
+        
             if not found_models:
                 self.logger.warning(f"No best model found for fold {fold} matching pattern '{search_pattern}'. Skipping.")
                 continue # Skip to the next fold if no model is found
-
+        
             if len(found_models) > 1:
                 self.logger.warning(f"Multiple best models found for fold {fold}: {found_models}. Loading the first one found.")
                 # If this happens, your deletion logic might not be working as intended.
@@ -957,7 +1197,7 @@ class BreastCancerTrainer:
                 model_path = found_models[0]
             else:
                 model_path = found_models[0]
-
+                
             if os.path.exists(model_path):
                 # fold_model = type(self.model)()  # Create new instance
                 fold_model = ModelFactory.create_model(
