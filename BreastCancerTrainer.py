@@ -629,8 +629,15 @@ class BreastCancerTrainer:
                     # model_for_eval.eval()
 
                     # Re-run validation inference to get true labels and probabilities
+                    temp_crit = None
+                    if self.config['focal_loss']:
+                        temp_crit = FocalLoss()
+                    elif self.config['soft_label']:
+                        temp_crit = nn.BCEWithLogitsLoss()
+                    else:
+                        temp_crit = nn.CrossEntropyLoss()
                     _, _, fold_true_labels, fold_predicted_probs = self.validate_epoch(
-                        model_for_eval, fold_val_loader, FocalLoss(), 0 # Criterion and epoch don't matter for just getting predictions
+                        model_for_eval, fold_val_loader, temp_crit, 0 # Criterion and epoch don't matter for just getting predictions
                     )
                 else:
                     self.logger.warning(f"Could not load best model for completed Fold {fold_idx+1}. Skipping metrics collection.")
