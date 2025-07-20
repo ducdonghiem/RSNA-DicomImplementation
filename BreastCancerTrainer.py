@@ -69,6 +69,9 @@ class BreastCancerTrainer:
             self.patch_producer = PatchProducer()
             self.patch_producer.to(self.device)
 
+         # determine whether to include metadata depending on patch usage
+        self.include_metadata = True if self.patch_producer else False
+
         # if config['soft_label']:
         
         # Initialize transforms
@@ -286,14 +289,18 @@ class BreastCancerTrainer:
             csv_path=os.path.join(self.config.get('output_dir', 'outputs'), 'train_split.csv'),
             data_root=data_root,
             transform=self.train_transform,
-            target_col=self.config.get('target_col', 'cancer')
+            target_col=self.config.get('target_col', 'cancer'),
+            include_metadata=self.include_metadata,
+            data_root_external=None
         )
         
         test_dataset = BreastCancerDataset(
             csv_path=os.path.join(self.config.get('output_dir', 'outputs'), 'test_split.csv'),
             data_root=data_root,
             transform=self.val_transform,
-            target_col=self.config.get('target_col', 'cancer')
+            target_col=self.config.get('target_col', 'cancer'),
+            include_metadata=self.include_metadata,
+            data_root_external=None
         )
         
         # Create data loaders
@@ -496,7 +503,7 @@ class BreastCancerTrainer:
         
         return avg_loss, metrics, all_targets, all_probs
     
-    def train_with_kfold(self, csv_path: str, data_root: str, k_folds: int = 5, resume: bool = False) -> Dict[str, List[float]]:
+    def train_with_kfold(self, csv_path: str, data_root: str, data_root_external: Optional[str]=None, k_folds: int = 5, resume: bool = False) -> Dict[str, List[float]]:
         """
         Train model using K-fold cross validation.
         
@@ -509,15 +516,32 @@ class BreastCancerTrainer:
             Dictionary with metrics for each fold
         """
         # Load data
-        df = pd.read_csv(csv_path)
+        df_main = pd.read_csv(csv_path)
+
+        use_external = self.config.get('use_external_data', False)
+        external_csv_path = self.config.get('external_csv_path') if use_external else None
+        if use_external:
+            if external_csv_path is None or not os.path.exists(external_csv_path):
+                raise FileNotFoundError(
+                    f"External dataset requested but path '{external_csv_path}' does not exist."
+                )
+            df_external = pd.read_csv(external_csv_path)
+            self.logger.info(f"Loaded external dataset with {len(df_external)} samples from {external_csv_path}")
+        else:
+            df_external = None
         
         # Split into train/test first
-        train_df, test_df = train_test_split(
-            df, 
-            test_size=0.05, 
-            stratify=df[self.config.get('target_col', 'cancer')],
+        train_df_main, test_df = train_test_split(
+            df_main, 
+            test_size=0.1, 
+            stratify=df_main[self.config.get('target_col', 'cancer')],
             random_state=42
         )
+
+        if use_external and df_external is not None:
+            train_df = pd.concat([train_df_main, df_external], ignore_index=True)
+        else:
+            train_df = train_df_main
         
         # K-fold cross validation on training data
         # kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
@@ -588,7 +612,8 @@ class BreastCancerTrainer:
                 
                 # fold_val_df = pd.read_csv(fold_val_path)
                 # Corrected: Pass df as keyword argument
-                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
+                
                 fold_val_loader = DataLoader(
                     fold_val_dataset, 
                     batch_size=self.config.get('batch_size', 32),
@@ -624,7 +649,7 @@ class BreastCancerTrainer:
                 
                 if latest_model_path:
                     self.logger.info(f"Loading best model for completed Fold {fold_idx+1} from {latest_model_path}")
-                    model_for_eval.load_state_dict(torch.load(latest_model_path, map_location=self.device)['model_state_dict'])
+                    model_for_eval.load_state_dict(torch.load(latest_model_path, map_location=self.device))
                     model_for_eval.to(self.device)
                     # model_for_eval.eval()
 
@@ -660,8 +685,8 @@ class BreastCancerTrainer:
                 # fold_val_df = pd.read_csv(fold_val_path)
 
                 # Corrected: Pass df as keyword argument
-                fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'))
-                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+                fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
+                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
                 
                 fold_train_loader = DataLoader(
                     fold_train_dataset, 
@@ -702,8 +727,8 @@ class BreastCancerTrainer:
                 fold_val_df.to_csv(fold_val_path, index=False)
             
                 # Corrected: Pass csv_path as keyword argument
-                fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'))
-                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+                fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
+                fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
                 
                 fold_train_loader = DataLoader(
                     fold_train_dataset, 
@@ -839,9 +864,10 @@ class BreastCancerTrainer:
             if resume_model_path:
                 self.logger.info(f"Loading checkpoint for Fold {fold} from {resume_model_path}")
                 checkpoint = torch.load(resume_model_path, map_location=self.device)
-                self.model.load_state_dict(checkpoint['model_state_dict'])
+                self.model.load_state_dict(checkpoint)
+                # Note: We are not saving/loading optimizer state currently.
                 # For true resume, you'd save optimizer.state_dict() and load it here.
-                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                # Example: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 # This requires saving optimizer state in the checkpoint.
             else:
                 self.logger.warning(f"No suitable checkpoint found for Fold {fold} to resume from epoch {start_epoch}. Starting fold from scratch.")
@@ -959,12 +985,12 @@ class BreastCancerTrainer:
                     f'best_model_fold_{fold}_epoch_{epoch+1}.pth' # Added _epoch_{epoch+1}
                 )
                 # For true resume, you should also save optimizer state:
-                torch.save({
-                    'model_state_dict': self.model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'epoch': epoch
-                }, model_path)
-                # torch.save(self.model.state_dict(), model_path)
+                # torch.save({
+                #     'model_state_dict': self.model.state_dict(),
+                #     'optimizer_state_dict': optimizer.state_dict(),
+                #     'epoch': epoch
+                # }, model_path)
+                torch.save(self.model.state_dict(), model_path)
                 self.logger.info(f"Saved new best model: {model_path}")
 
                 # Update the path to the newly saved model
@@ -1169,7 +1195,7 @@ class BreastCancerTrainer:
         
         # Create test dataset
         # test_dataset = BreastCancerDataset(test_path, data_root, self.val_transform)
-        test_dataset = BreastCancerDataset(csv_path=test_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'))
+        test_dataset = BreastCancerDataset(csv_path=test_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=None)
 
         test_loader = DataLoader(
             test_dataset, 
@@ -1211,7 +1237,7 @@ class BreastCancerTrainer:
                     num_classes=self.config.get('num_classes', 2),
                     pretrained=False
                 )
-                fold_model.load_state_dict(torch.load(model_path, map_location=self.device)['model_state_dict'])
+                fold_model.load_state_dict(torch.load(model_path))
                 fold_model.to(self.device)
                 fold_model.eval()
 

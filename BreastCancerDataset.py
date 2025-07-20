@@ -13,7 +13,9 @@ class BreastCancerDataset(Dataset):
                  csv_path: str, 
                  data_root: str, 
                  transform: Optional[A.Compose] = None,
-                 target_col: str = 'cancer'):
+                 target_col: str = 'cancer',
+                 include_metadata: bool = True,
+                 data_root_external: Optional[str] = None):
         """
         Initialize the dataset.
         
@@ -24,9 +26,11 @@ class BreastCancerDataset(Dataset):
             target_col: Name of target column in CSV
         """
         self.df = pd.read_csv(csv_path)
-        self.data_root = data_root
+        self.data_root_main = data_root
+        self.data_root_external = data_root_external if data_root_external else data_root
         self.transform = transform
         self.target_col = target_col
+        self.include_metadata = include_metadata
         
         # Validate data paths
         self._validate_data_paths()
@@ -46,7 +50,9 @@ class BreastCancerDataset(Dataset):
     
     def _get_file_path(self, patient_id: str, scan_id: str) -> str:
         """Get full file path for a scan."""
-        return os.path.join(self.data_root, str(patient_id), f"{scan_id}.npy")
+        # Choose root depending on ID format: external IDs start with 'D'
+        root = self.data_root_external if str(patient_id).startswith('D') else self.data_root_main
+        return os.path.join(root, str(patient_id), f"{scan_id}.npy")
     
     def __len__(self) -> int:
         return len(self.df)
@@ -54,7 +60,7 @@ class BreastCancerDataset(Dataset):
     # get metadata for the corresponding idx
     def _get_metadata(self, row):
         exclude_cols = ['patient_id', 'image_id', 'cancer', 'biopsy', 'invasive', 'difficult_negative_case', 'BIRADS', 'density']       # they also excluded implant
-        row = row.drop(exclude_cols).astype(float)
+        row = row.drop(exclude_cols, errors='ignore').astype(float)
         return torch.tensor(row.values, dtype=torch.float32)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int, Dict]:
@@ -101,7 +107,10 @@ class BreastCancerDataset(Dataset):
             target = 0
         
         # needed to modify for patching
-        metadata = self._get_metadata(self.df.loc[idx])
+        if self.include_metadata:
+            metadata = self._get_metadata(self.df.loc[idx])
+        else:
+            metadata = torch.zeros(1)  # placeholder; indicates no metadata/patching
         # metadata = {
         #     'scan_id': scan_id,
         #     'patient_id': patient_id,
