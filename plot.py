@@ -22,9 +22,14 @@ import matplotlib.pyplot as plt
 
 # arr = np.load("../../processed_data/48042/599175404.npy")
 # arr = np.load("../../processed_data/10226/461614796.npy")
-arr = np.load("../../processed_data/10130/388811999.npy")
+# arr = np.load("../../processed_data/10130/388811999.npy")
+
+arr = np.load("../../processed_external_data/D1-0058/1-2.npy")
+
 
 print(arr.shape, arr.dtype)     # (512, 512), float32
+
+print(sum(arr[(arr > 1) | (arr < 0)]))
 
 # Plot the image
 plt.imshow(arr, cmap='gray')

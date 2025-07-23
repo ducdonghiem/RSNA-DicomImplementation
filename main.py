@@ -37,12 +37,12 @@ def main():
         'num_classes': 1,
         'default_metric': 'pF1', # ['balanced_accuracy', 'pF1'],# 'balanced_accuracy' (original) or 'pF1' or 'macroF1' or 'recall' or 'precision'
         'pretrained': True,
-        'patched': False,
+        'patched': True,
         'class_weight': False,       # if want to add more weight to positive class (will significantly increase recall and decrease precision)
         'soft_label': False,         # will use BCE loss, and sigmoid. MUST SET num_classes = 1. If set false, MUST SET num_classes = 2
         'soft_pos': 0.9,            # for soft_label. Ignore if not use soft_label
         'soft_neg': 0.0,            # for soft_label. Ignore if not use soft_label
-        'threshold': 0.3424,           # for soft_label and focal_loss. Ignore if not use soft_label. To increase Precision, Raise the threshold. To increase Recall, Lower the threshold
+        'threshold': 0.32,           # for soft_label and focal_loss. Ignore if not use soft_label. To increase Precision, Raise the threshold. To increase Recall, Lower the threshold
         'focal_loss': True,         # if True must set soft_label False and num_classes = 1
         'batch_size': 64,          # can be 1024 for H100
         'learning_rate': 2e-4,              # set to 1e-4 for small batch_size (linear relationship with batch size)
@@ -52,10 +52,12 @@ def main():
         'warmup_epochs': 5,                     # set to 0 for small batch_size (32)
         'patience': 55,
         'num_workers': 12,           # --cpus-per-task=6
+        'test_size': 0.1,
         'k_folds': 5,
         'target_col': 'cancer',
         'output_dir': '../outputs',
-        'use_external_data': True
+        'use_external_data': False,
+        'oversample_minority': True             # minority oversammpling (no need external data)
     }
 
     if config['use_external_data']:
@@ -70,7 +72,7 @@ def main():
     trainer = BreastCancerTrainer(config)
     
     # Run K-fold cross validation
-    fold_results = trainer.train_with_kfold(csv_path, data_root, data_root_external, k_folds=5, resume=False)       # set resume=True if use checkpoint
+    fold_results = trainer.train_with_kfold(csv_path, data_root, data_root_external, k_folds=config['k_folds'], resume=False)       # set resume=True if use checkpoint
     
     print("Training completed successfully!")
 

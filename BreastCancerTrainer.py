@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch import nn, optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split, KFold
 import albumentations as A
 import albumentations.pytorch as AP
@@ -520,6 +520,7 @@ class BreastCancerTrainer:
 
         use_external = self.config.get('use_external_data', False)
         external_csv_path = self.config.get('external_csv_path') if use_external else None
+        df_external = None # Initialize df_external
         if use_external:
             if external_csv_path is None or not os.path.exists(external_csv_path):
                 raise FileNotFoundError(
@@ -533,15 +534,15 @@ class BreastCancerTrainer:
         # Split into train/test first
         train_df_main, test_df = train_test_split(
             df_main, 
-            test_size=0.1, 
+            test_size=self.config['test_size'],
             stratify=df_main[self.config.get('target_col', 'cancer')],
             random_state=42
         )
 
-        if use_external and df_external is not None:
-            train_df = pd.concat([train_df_main, df_external], ignore_index=True)
-        else:
-            train_df = train_df_main
+        # if use_external and df_external is not None:
+        #     train_df = pd.concat([train_df_main, df_external], ignore_index=True)
+        # else:
+        #     train_df = train_df_main
         
         # K-fold cross validation on training data
         # kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
@@ -595,7 +596,7 @@ class BreastCancerTrainer:
         all_folds_predicted_probs = []
         
         # for fold, (train_idx, val_idx) in enumerate(kfold.split(train_df)):
-        for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(train_df, train_df[self.config['target_col']])):     # for balance between folds
+        for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(train_df_main, train_df_main[self.config['target_col']])):     # for balance between folds
             current_fold_start_epoch = 0
             fold_true_labels = []
             fold_predicted_probs = []
@@ -688,12 +689,33 @@ class BreastCancerTrainer:
                 fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
                 fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
                 
-                fold_train_loader = DataLoader(
-                    fold_train_dataset, 
-                    batch_size=self.config.get('batch_size', 32),
-                    shuffle=True, 
-                    num_workers=self.config.get('num_workers', 4)
-                )
+                if self.config['oversample_minority']:
+                    # --- WeightedRandomSampler for minority oversampling ---
+                    # Get targets for the current training fold (only from main data, external data is not used for weighting)
+                    fold_train_df = pd.read_csv(fold_train_path)
+                    train_targets = fold_train_df[self.config.get('target_col', 'cancer')].values
+                    # Calculate class weights for sampling
+                    class_sample_counts = np.array([len(np.where(train_targets == t)[0]) for t in np.unique(train_targets)])
+                    weight = 1. / class_sample_counts
+                    samples_weight = np.array([weight[t] for t in train_targets])
+                    samples_weight = torch.from_numpy(samples_weight).double()
+                    # Create sampler
+                    sampler = WeightedRandomSampler(weights=samples_weight, num_samples=len(samples_weight), replacement=True)
+                    fold_train_loader = DataLoader(
+                        fold_train_dataset, 
+                        batch_size=self.config.get('batch_size', 32),
+                        # shuffle=True, # Remove shuffle when using a sampler
+                        sampler=sampler, # Use the sampler here
+                        num_workers=self.config.get('num_workers', 4)
+                    )
+                else:
+                    fold_train_loader = DataLoader(
+                        fold_train_dataset, 
+                        batch_size=self.config.get('batch_size', 32),
+                        shuffle=True, 
+                        num_workers=self.config.get('num_workers', 4)
+                    )
+
                 fold_val_loader = DataLoader(
                     fold_val_dataset, 
                     batch_size=self.config.get('batch_size', 32),
@@ -717,8 +739,14 @@ class BreastCancerTrainer:
             else: # This block handles both fresh runs (resume=False) and new folds after a resume point
                 self.logger.info(f"Starting Fold {fold_idx + 1}/{k_folds}")
                 # For new folds, generate splits as usual
-                fold_train_df = train_df.iloc[train_idx].reset_index(drop=True)
-                fold_val_df = train_df.iloc[val_idx].reset_index(drop=True)
+                fold_train_df_main_subset = train_df_main.iloc[train_idx].reset_index(drop=True)
+                fold_val_df = train_df_main.iloc[val_idx].reset_index(drop=True) # Validation is always main data
+
+                # Construct the full training DataFrame for this fold (main subset + external if applicable)
+                if use_external and df_external is not None:
+                    fold_train_df = pd.concat([fold_train_df_main_subset, df_external], ignore_index=True)
+                else:
+                    fold_train_df = fold_train_df_main_subset
                 
                 # Save fold splits (only for new folds, or if not resuming this specific fold)
                 fold_train_path = os.path.join(self.config.get('output_dir', 'outputs'), f'fold_{fold_idx+1}_train.csv')
@@ -730,12 +758,32 @@ class BreastCancerTrainer:
                 fold_train_dataset = BreastCancerDataset(csv_path=fold_train_path, data_root=data_root, transform=self.train_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
                 fold_val_dataset = BreastCancerDataset(csv_path=fold_val_path, data_root=data_root, transform=self.val_transform, target_col=self.config.get('target_col', 'cancer'), include_metadata=self.include_metadata, data_root_external=data_root_external)
                 
-                fold_train_loader = DataLoader(
-                    fold_train_dataset, 
-                    batch_size=self.config.get('batch_size', 32),
-                    shuffle=True, 
-                    num_workers=self.config.get('num_workers', 4)
-                )
+                if self.config['oversample_minority']:
+                    # --- WeightedRandomSampler for minority oversampling ---
+                    # Get targets for the current training fold (only from main data, external data is not used for weighting)
+                    train_targets = fold_train_df[self.config.get('target_col', 'cancer')].values
+                    # Calculate class weights for sampling
+                    class_sample_counts = np.array([len(np.where(train_targets == t)[0]) for t in np.unique(train_targets)])
+                    weight = 1. / class_sample_counts
+                    samples_weight = np.array([weight[t] for t in train_targets])
+                    samples_weight = torch.from_numpy(samples_weight).double()
+                    # Create sampler
+                    sampler = WeightedRandomSampler(weights=samples_weight, num_samples=len(samples_weight), replacement=True)
+                    fold_train_loader = DataLoader(
+                        fold_train_dataset, 
+                        batch_size=self.config.get('batch_size', 32),
+                        # shuffle=True, # Remove shuffle when using a sampler
+                        sampler=sampler, # Use the sampler here
+                        num_workers=self.config.get('num_workers', 4)
+                    )
+                else:
+                    fold_train_loader = DataLoader(
+                        fold_train_dataset, 
+                        batch_size=self.config.get('batch_size', 32),
+                        shuffle=True, 
+                        num_workers=self.config.get('num_workers', 4)
+                    )
+
                 fold_val_loader = DataLoader(
                     fold_val_dataset, 
                     batch_size=self.config.get('batch_size', 32),
