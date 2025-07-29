@@ -117,4 +117,4 @@ class BreastCancerDataset(Dataset):
         #     'file_path': file_path
         # }
         
-        return image, target, metadata
+        return image, target, metadata, scan_id

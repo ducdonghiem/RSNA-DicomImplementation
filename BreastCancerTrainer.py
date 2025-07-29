@@ -371,7 +371,7 @@ class BreastCancerTrainer:
         all_probs = []
         
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} [Train]")
-        for batch_idx, (images, targets, metadata) in enumerate(pbar):
+        for batch_idx, (images, targets, metadata, image_ids) in enumerate(pbar):
             images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
 
             global_step = epoch * len(train_loader) + batch_idx         # current step, or current iteration, or current batch
@@ -455,7 +455,7 @@ class BreastCancerTrainer:
         
         with torch.no_grad():
             pbar = tqdm(val_loader, desc=f'Epoch {epoch+1} [Val]')
-            for batch_idx, (images, targets, metadata) in enumerate(pbar):
+            for batch_idx, (images, targets, metadata, image_ids) in enumerate(pbar):
                 images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
 
                 # patch modify
@@ -1240,6 +1240,11 @@ class BreastCancerTrainer:
         # Save test split
         test_path = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_split.csv')
         test_df.to_csv(test_path, index=False)
+
+        # if 'predicted_class' in test_df.columns:
+        #     test_df = test_df.drop(columns=['predicted_class'])
+        # test_df = test_df.drop(columns=['predicted_probability'])
+        # test_df.to_csv(test_path, index=False)
         
         # Create test dataset
         # test_dataset = BreastCancerDataset(test_path, data_root, self.val_transform)
@@ -1301,6 +1306,7 @@ class BreastCancerTrainer:
         all_preds = []
         all_targets = []
         all_probs = []
+        all_image_ids = [] # To store image_ids for later merging
 
         if self.config['soft_label']:
             criterion = nn.BCEWithLogitsLoss()
@@ -1312,7 +1318,7 @@ class BreastCancerTrainer:
         
         with torch.no_grad():
             pbar = tqdm(test_loader, desc='Test [Ensemble]')
-            for batch_idx, (images, targets, metadata) in enumerate(pbar):
+            for batch_idx, (images, targets, metadata, image_ids) in enumerate(pbar):
                 images, targets, metadata = images.to(self.device), targets.to(self.device), metadata.to(self.device)
 
                 # patch modify
@@ -1343,7 +1349,13 @@ class BreastCancerTrainer:
                 else:
                     probs = torch.softmax(ensemble_outputs, dim=1)
                     preds = torch.argmax(ensemble_outputs, dim=1)
-                
+
+                preds = preds.squeeze()
+
+                # final_test_split = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_split.csv')
+                # add the probs and preds column to this csv file (to the row the has image_id = test_df['image_id'], dont delete anything else in the csv file
+                 # Append batch results
+                all_image_ids.extend(image_ids.cpu().numpy()) # Assuming image_ids are accessible and can be converted to numpy
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(targets.cpu().numpy())
 
@@ -1356,6 +1368,22 @@ class BreastCancerTrainer:
                     'loss': f'{loss.item():.4f}',
                     'avg_loss': f'{total_loss/(batch_idx+1):.4f}'
                 })
+
+        # Create a DataFrame from the collected predictions and probabilities
+        results_df = pd.DataFrame({
+            'image_id': all_image_ids,
+            'predicted_probability': [p[1] if len(p) > 1 else p[0] for p in all_probs], # Adjust if not binary classification
+            'predicted_class': all_preds
+        })
+
+        # Merge the results with the original test_df
+        # Ensure 'image_id' is the common column for merging
+        test_df_with_preds = pd.merge(test_df, results_df, on='image_id', how='left')
+
+        # Save the updated CSV
+        test_df_with_preds.to_csv(test_path, index=False)
+        self.logger.info(f"Updated final_test_split.csv with predictions and probabilities at {test_path}")
+
         
         test_loss = total_loss / len(test_loader)
         test_metrics = MetricsCalculator.calculate_metrics(all_targets, all_preds, all_probs)
