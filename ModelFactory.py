@@ -1,12 +1,13 @@
 # import torch
 import torchvision
 import torch.nn as nn
+from MV_model import MV_Model
 
 class ModelFactory:
     """Factory class for creating different model architectures."""
     
     @staticmethod
-    def create_model(model_name: str, num_classes: int = 2, pretrained: bool = True) -> nn.Module:
+    def create_model(model_name: str, num_classes: int = 2, pretrained: bool = True, **kwargs) -> nn.Module:
         """
         Create a model based on the specified architecture.
         
@@ -14,6 +15,7 @@ class ModelFactory:
             model_name: Name of the model ('resnet50', 'vit_b_16', etc.)
             num_classes: Number of output classes
             pretrained: Whether to use pretrained weights
+            **kwargs: Additional arguments for specific models
             
         Returns:
             PyTorch model
@@ -58,6 +60,15 @@ class ModelFactory:
             else:
                 model = torchvision.models.convnext_tiny(weights=None)
             model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
+
+        elif model_name == "mv_model":
+            # Multi-view model for breast cancer detection
+            feature_dim = kwargs.get('feature_dim', 1280)  # Default for EfficientNetB0
+            model = MV_Model(
+                num_classes=num_classes,
+                pretrained=pretrained,
+                feature_dim=feature_dim
+            )
 
         else:
             raise ValueError(f"Model {model_name} not supported")

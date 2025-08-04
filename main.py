@@ -24,6 +24,8 @@
 #=============================================================================
 
 from BreastCancerTrainer import BreastCancerTrainer
+from BreastCancerTrainerMV import BreastCancerTrainerMV
+
 import sys
 
 # import pandas as pd
@@ -35,7 +37,7 @@ def main():
     config = {
         'model_name': 'efficientnet_b0',  # or 'vit'  # or 'efficientnet_b0' or 'resnet50' or 'densenet121' or 'convnext_tiny'
         'num_classes': 1,
-        'default_metric': 'pF1', # ['balanced_accuracy', 'pF1'],# 'balanced_accuracy' (original) or 'pF1' or 'macroF1' or 'recall' or 'precision'
+        'default_metric': 'pF1', # ['balanced_accuracy', 'pF1'],# 'balanced_accuracy' (original) or 'pF1' or 'macroF1' or 'recall' or 'precision' or 'mv_model'
         'pretrained': True,
         'patched': True,
         'class_weight': False,       # if want to add more weight to positive class (will significantly increase recall and decrease precision)
@@ -64,12 +66,22 @@ def main():
         config['external_csv_path'] = '../../external_expanded.csv'
     
     # Paths (adjust these to your data)
-    csv_path = '../../train_expanded.csv'  # Your CSV file with scan_id, patient_id, cancer columns
+    # csv_path = '../../train_expanded.csv'  # Your CSV file with scan_id, patient_id, cancer columns
+
+    if config['model_name'] == 'mv_model':
+        csv_path = '../../train_breast.csv'  # Use the multi-view CSV for MV_Model
+        # Create trainer
+        trainer = BreastCancerTrainerMV(config)
+
+    else:
+        csv_path = '../../train_expanded.csv'
+        trainer = BreastCancerTrainer(config)
+
     data_root = '../../processed_data'      # Root directory containing patient folders with .npy files
     data_root_external = '../../processed_external_data'
     
     # Create trainer
-    trainer = BreastCancerTrainer(config)
+    # trainer = BreastCancerTrainer(config)
     
     # Run K-fold cross validation
     fold_results = trainer.train_with_kfold(csv_path, data_root, data_root_external, k_folds=config['k_folds'], resume=False)       # set resume=True if use checkpoint
