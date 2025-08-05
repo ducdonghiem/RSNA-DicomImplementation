@@ -1421,8 +1421,17 @@ class BreastCancerTrainerMV:
                 # final_test_split = os.path.join(self.config.get('output_dir', 'outputs'), 'final_test_split.csv')
                 # add the probs and preds column to this csv file (to the row the has image_id = test_df['image_id'], dont delete anything else in the csv file
                 # Append batch results
-                all_breast_ids.extend(breast_ids.cpu().numpy()) # Assuming image_ids are accessible and can be converted to numpy
-                all_preds.extend(preds.cpu().numpy())
+                # all_breast_ids.extend(breast_ids.cpu().numpy()) # Assuming image_ids are accessible and can be converted to numpy
+                all_breast_ids.extend(np.array(breast_ids))
+                # print(preds.shape)
+                # all_preds.extend(preds.cpu().numpy())
+                preds_np = preds.cpu().numpy()
+
+                # If preds_np is a scalar (0-d array), wrap it in a list
+                if preds_np.ndim == 0:
+                    all_preds.append(preds_np.item())  # .item() converts it to a native Python scalar
+                else:
+                    all_preds.extend(preds_np)
                 all_targets.extend(targets.cpu().numpy())
 
                 if self.config['soft_label'] or self.config['focal_loss']:
