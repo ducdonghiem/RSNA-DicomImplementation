@@ -102,72 +102,123 @@ class MV_Model(nn.Module):
         
         return encoder
     
+    # def _extract_view_features_batch(self, scans_batch, encoder):
+    #     """
+    #     Extract features from multiple scans across a batch.
+        
+    #     Args:
+    #         scans_batch: List of lists, where each inner list contains tensors for one sample
+    #                     [[sample1_scan1, sample1_scan2], [sample2_scan1], ...]
+    #         encoder: The encoder network for this view
+            
+    #     Returns:
+    #         batch_features: List of tensors, each of shape (num_scans_for_sample, feature_dim)
+    #     """
+    #     batch_features = []
+        
+    #     for sample_scans in scans_batch:  # Iterate through each sample in the batch
+    #         if not sample_scans:  # Handle empty list case
+    #             raise ValueError("No scans provided for sample")
+            
+    #         sample_features = []
+            
+    #         for scan in sample_scans:  # Iterate through scans for this sample
+    #             # Ensure scan is a tensor
+    #             if not isinstance(scan, torch.Tensor):
+    #                 raise ValueError(f"Expected tensor, got {type(scan)}")
+                
+    #             # Add batch dimension if needed (single sample processing)
+    #             if scan.dim() == 3:  # (channels, height, width)
+    #                 scan = scan.unsqueeze(0)  # (1, channels, height, width)
+                
+    #             # Extract features from this scan
+    #             features = encoder(scan)  # (1, feature_dim, 1, 1)
+    #             features = features.squeeze(-1).squeeze(-1).squeeze(0)  # (feature_dim,)
+    #             sample_features.append(features)
+            
+    #         # Stack features for this sample
+    #         sample_features_tensor = torch.stack(sample_features, dim=0)  # (num_scans, feature_dim)
+    #         batch_features.append(sample_features_tensor)
+        
+    #     return batch_features
+    
+    # def _aggregate_batch_features(self, batch_features, aggregator):
+    #     """
+    #     Apply attention aggregation to a batch of variable-length feature sequences.
+        
+    #     Args:
+    #         batch_features: List of tensors, each of shape (num_scans_for_sample, feature_dim)
+    #         aggregator: AttentionAggregator instance
+            
+    #     Returns:
+    #         aggregated_batch: Tensor of shape (batch_size, feature_dim)
+    #     """
+    #     aggregated_samples = []
+        
+    #     for sample_features in batch_features:
+    #         # Add batch dimension for aggregator
+    #         sample_features_batch = sample_features.unsqueeze(0)  # (1, num_scans, feature_dim)
+            
+    #         # Aggregate using attention
+    #         aggregated_sample = aggregator(sample_features_batch)  # (1, feature_dim)
+    #         aggregated_sample = aggregated_sample.squeeze(0)  # (feature_dim,)
+            
+    #         aggregated_samples.append(aggregated_sample)
+        
+    #     # Stack all samples to create final batch tensor
+    #     aggregated_batch = torch.stack(aggregated_samples, dim=0)  # (batch_size, feature_dim)
+        
+    #     return aggregated_batch
+
+
+    # Assuming your model is on the correct device (CPU/GPU)
     def _extract_view_features_batch(self, scans_batch, encoder):
         """
-        Extract features from multiple scans across a batch.
-        
-        Args:
-            scans_batch: List of lists, where each inner list contains tensors for one sample
-                        [[sample1_scan1, sample1_scan2], [sample2_scan1], ...]
-            encoder: The encoder network for this view
-            
-        Returns:
-            batch_features: List of tensors, each of shape (num_scans_for_sample, feature_dim)
+        Corrected method to extract features from multiple scans in a batch.
         """
-        batch_features = []
+        # Flatten the list of lists into a single list of all scans in the batch
+        all_scans = [scan for sample_scans in scans_batch for scan in sample_scans]
         
-        for sample_scans in scans_batch:  # Iterate through each sample in the batch
-            if not sample_scans:  # Handle empty list case
-                raise ValueError("No scans provided for sample")
-            
-            sample_features = []
-            
-            for scan in sample_scans:  # Iterate through scans for this sample
-                # Ensure scan is a tensor
-                if not isinstance(scan, torch.Tensor):
-                    raise ValueError(f"Expected tensor, got {type(scan)}")
-                
-                # Add batch dimension if needed (single sample processing)
-                if scan.dim() == 3:  # (channels, height, width)
-                    scan = scan.unsqueeze(0)  # (1, channels, height, width)
-                
-                # Extract features from this scan
-                features = encoder(scan)  # (1, feature_dim, 1, 1)
-                features = features.squeeze(-1).squeeze(-1).squeeze(0)  # (feature_dim,)
-                sample_features.append(features)
-            
-            # Stack features for this sample
-            sample_features_tensor = torch.stack(sample_features, dim=0)  # (num_scans, feature_dim)
-            batch_features.append(sample_features_tensor)
+        # Concatenate all scans into a single tensor for batch processing
+        if not all_scans:
+            return [torch.empty(0, self.feature_dim, device='cuda')] * len(scans_batch)
+        
+        all_scans_tensor = torch.stack(all_scans, dim=0).to('cuda')
+        
+        # Process all scans in one forward pass
+        all_features_tensor = encoder(all_scans_tensor)
+        
+        # Squeeze the spatial dimensions
+        all_features_tensor = all_features_tensor.squeeze(-1).squeeze(-1)
+        
+        # Re-group features back into a list of tensors for each sample
+        batch_features = []
+        current_idx = 0
+        for sample_scans in scans_batch:
+            num_scans = len(sample_scans)
+            sample_features = all_features_tensor[current_idx:current_idx + num_scans]
+            batch_features.append(sample_features)
+            current_idx += num_scans
         
         return batch_features
-    
+
     def _aggregate_batch_features(self, batch_features, aggregator):
         """
-        Apply attention aggregation to a batch of variable-length feature sequences.
-        
-        Args:
-            batch_features: List of tensors, each of shape (num_scans_for_sample, feature_dim)
-            aggregator: AttentionAggregator instance
-            
-        Returns:
-            aggregated_batch: Tensor of shape (batch_size, feature_dim)
+        Corrected aggregation to handle a list of tensors from the previous step.
         """
         aggregated_samples = []
-        
         for sample_features in batch_features:
-            # Add batch dimension for aggregator
-            sample_features_batch = sample_features.unsqueeze(0)  # (1, num_scans, feature_dim)
-            
-            # Aggregate using attention
-            aggregated_sample = aggregator(sample_features_batch)  # (1, feature_dim)
-            aggregated_sample = aggregated_sample.squeeze(0)  # (feature_dim,)
-            
-            aggregated_samples.append(aggregated_sample)
+            if sample_features.shape[0] == 0:
+                # Handle case with no scans gracefully, e.g., with a zero vector
+                aggregated_samples.append(torch.zeros(self.feature_dim, device='cuda'))
+            else:
+                # Add batch dimension for aggregator, which expects (batch, num_scans, feature_dim)
+                sample_features_batch = sample_features.unsqueeze(0)
+                aggregated_sample = aggregator(sample_features_batch)
+                aggregated_sample = aggregated_sample.squeeze(0)
+                aggregated_samples.append(aggregated_sample)
         
-        # Stack all samples to create final batch tensor
-        aggregated_batch = torch.stack(aggregated_samples, dim=0)  # (batch_size, feature_dim)
-        
+        aggregated_batch = torch.stack(aggregated_samples, dim=0)
         return aggregated_batch
     
     def forward(self, mlo_scans, cc_scans):
