@@ -59,6 +59,8 @@ class BreastCancerDatasetMV(Dataset):
     def _get_file_path(self, patient_id: str, scan_id: str) -> str:
         """Get full file path for a scan."""
         # Choose root depending on ID format: external IDs start with 'D'
+        if (str(scan_id).startswith('P')):
+            return os.path.join("../processed_CESM-external", f"{scan_id}.npy")
         root = self.data_root_external if str(patient_id).startswith('D') else self.data_root_main
         return os.path.join(root, str(patient_id), f"{scan_id}.npy")
     

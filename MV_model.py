@@ -58,7 +58,7 @@ class MV_Model(nn.Module):
     Handles variable number of scans per view with attention-based aggregation.
     """
     
-    def __init__(self, num_classes: int = 2, pretrained: bool = True, feature_dim: int = 1280):
+    def __init__(self, num_classes: int = 2, pretrained: bool = True, feature_dim: int = 1280):     # 1280 for EfficientNetB0, 768 for ConvNeXt-V1 small
         """
         Args:
             num_classes: Number of output classes (default: 2 for cancer/no cancer)
@@ -101,6 +101,19 @@ class MV_Model(nn.Module):
         encoder = nn.Sequential(*list(encoder.children())[:-1])  # Remove classifier
         
         return encoder
+
+    # def _create_encoder(self, pretrained: bool) -> nn.Module:
+    #     """Create a feature encoder based on ConvNeXt-V1 small."""
+    #     if pretrained:
+    #         encoder = torchvision.models.convnext_small(weights='IMAGENET1K_V1')
+    #     else:
+    #         encoder = torchvision.models.convnext_small(weights=None)
+        
+    #     # ConvNeXt's architecture has a features block and a classifier block.
+    #     # We remove the classifier to get feature vectors.
+    #     encoder = nn.Sequential(*list(encoder.children())[:-1])
+        
+    #     return encoder
     
     # def _extract_view_features_batch(self, scans_batch, encoder):
     #     """

@@ -63,7 +63,7 @@ class ModelFactory:
 
         elif model_name == "mv_model":
             # Multi-view model for breast cancer detection
-            feature_dim = kwargs.get('feature_dim', 1280)  # Default for EfficientNetB0
+            feature_dim = kwargs.get('feature_dim', 1280)  # 1280 for EfficientNetB0
             model = MV_Model(
                 num_classes=num_classes,
                 pretrained=pretrained,

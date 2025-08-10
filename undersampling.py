@@ -8,7 +8,7 @@ positive_samples = df[df['cancer'] == 1]
 negative_samples = df[df['cancer'] == 0]
 
 # Randomly sample 3,842 negative samples
-negative_sampled = negative_samples.sample(n=3000 - len(positive_samples), random_state=42)
+negative_sampled = negative_samples.sample(n=3000 - 149 - len(positive_samples), random_state=42)
 
 # Combine positive and sampled negative samples
 undersampled_df = pd.concat([positive_samples, negative_sampled])
