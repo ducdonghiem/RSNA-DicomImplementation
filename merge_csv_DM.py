@@ -2,7 +2,7 @@ import pandas as pd
 
 # Load both CSVs
 dm_df = pd.read_csv("../DM_breast.csv")
-train_df = pd.read_csv("../train_undersampling_breast.csv")
+train_df = pd.read_csv("../train_undersampling_breast_19851.csv")
 
 # Filter for positive samples with both views
 dm_filtered = dm_df[
@@ -31,4 +31,6 @@ dm_filtered = dm_filtered[required_columns]
 
 # Concatenate and save
 combined_df = pd.concat([train_df, dm_filtered], ignore_index=True)
-combined_df.to_csv("../train_undersampling_breast_DM.csv", index=False)
+combined_df.to_csv("../train_undersampling_breast_DM_20k.csv", index=False)
+
+print(len(combined_df), "total samples after merging DM data")
