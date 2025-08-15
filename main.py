@@ -59,7 +59,9 @@ def main():
         'target_col': 'cancer',
         'output_dir': '../outputs',
         'use_external_data': False,
-        'oversample_minority': True             # minority oversammpling (no need external data)
+        'oversample_minority': True,             # minority oversammpling (no need external data)
+        'desired_minority_ratio': 1,
+        'desired_majority_ratio': 7
     }
 
     if config['use_external_data']:

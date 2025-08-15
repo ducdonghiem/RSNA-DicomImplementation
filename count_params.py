@@ -4,7 +4,7 @@ from MV_model import MV_Model
 # Initialize the model
 num_classes = 1
 pretrained = True
-feature_dim = 768
+feature_dim = 1280
 
 model = MV_Model(
     num_classes=num_classes,

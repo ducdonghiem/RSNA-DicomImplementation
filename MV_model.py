@@ -89,16 +89,30 @@ class MV_Model(nn.Module):
             nn.Linear(128, num_classes)
         )
     
-    def _create_encoder(self, pretrained: bool) -> nn.Module:
-        """Create a feature encoder based on EfficientNetB0."""
-        if pretrained:
-            encoder = torchvision.models.efficientnet_b0(weights='IMAGENET1K_V1')
-        else:
-            encoder = torchvision.models.efficientnet_b0(weights=None)
+    # def _create_encoder(self, pretrained: bool) -> nn.Module:
+    #     """Create a feature encoder based on EfficientNetB0."""
+    #     if pretrained:
+    #         encoder = torchvision.models.efficientnet_b0(weights='IMAGENET1K_V1')
+    #     else:
+    #         encoder = torchvision.models.efficientnet_b0(weights=None)
         
-        # Remove the final classifier to get feature vectors
-        # EfficientNetB0 has features + avgpool + classifier
-        encoder = nn.Sequential(*list(encoder.children())[:-1])  # Remove classifier
+    #     # Remove the final classifier to get feature vectors
+    #     # EfficientNetB0 has features + avgpool + classifier
+    #     encoder = nn.Sequential(*list(encoder.children())[:-1])  # Remove classifier
+        
+    #     return encoder
+    
+    def _create_encoder(self, pretrained: bool) -> nn.Module:
+        """Create a feature encoder based on EfficientNetV2-B0 (7.1M params)."""
+        if pretrained:
+            # weights = torchvision.models.EfficientNet_V2_B0_Weights.IMAGENET1K_V1
+            # encoder = torchvision.models.efficientnet_v2_b0(weights='IMAGENET1K_V1')
+            encoder = torchvision.models.efficientnet_v2_s(weights='IMAGENET1K_V1')  # ~21M params
+        else:
+            encoder = torchvision.models.efficientnet_v2_s(weights=None)
+        
+        # Remove the classifier to get feature vectors
+        encoder = nn.Sequential(*list(encoder.children())[:-1])  # Removes classifier
         
         return encoder
 

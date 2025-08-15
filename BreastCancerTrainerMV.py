@@ -609,7 +609,7 @@ class BreastCancerTrainerMV:
             'val_F1': [],
             'val_macroF1': [],
             'val_auc_roc': [],
-            'val_pr_roc': [],
+            'val_pr_auc': [],
             'val_recall': [],
             'val_precision': []
         }
@@ -740,14 +740,53 @@ class BreastCancerTrainerMV:
                 
                 if self.config['oversample_minority']:
                     # --- WeightedRandomSampler for minority oversampling ---
-                    # Get targets for the current training fold (only from main data, external data is not used for weighting)
+                    # Get targets for the current training fold (only from main data)
                     fold_train_df = pd.read_csv(fold_train_path)
+                    # Ensure targets are 0 or 1. 'cancer' column is assumed to contain these labels.
                     train_targets = fold_train_df[self.config.get('target_col', 'cancer')].values
-                    # Calculate class weights for sampling
-                    class_sample_counts = np.array([len(np.where(train_targets == t)[0]) for t in np.unique(train_targets)])
-                    weight = 1. / class_sample_counts
-                    samples_weight = np.array([weight[t] for t in train_targets])
-                    samples_weight = torch.from_numpy(samples_weight).double()
+                    
+                    # Get unique class labels and their counts
+                    unique_classes, class_counts = np.unique(train_targets, return_counts=True)
+                    class_to_count = dict(zip(unique_classes, class_counts))
+
+                    # Define the desired effective ratio for the *sampled output*:
+                    # We want minority (label 1) : majority (label 0) to be 1:7 overall in the sampled data.
+                    # This means for every 1 sampled minority, there should be 7 sampled majority.
+                    # This maintains the majority as the more frequent class, but reduces the imbalance.
+                    
+                    # Assume label 1 is the minority class and label 0 is the majority class.
+                    # Adjust `minority_label` and `majority_label` if your labels are different.
+                    minority_label = 1
+                    majority_label = 0
+                    
+                    # Get initial counts of minority and majority classes from the dataset
+                    initial_minority_count = class_to_count.get(minority_label, 0)
+                    initial_majority_count = class_to_count.get(majority_label, 0)
+
+                    # Safety check: ensure both classes exist to avoid division by zero
+                    if initial_minority_count == 0 or initial_majority_count == 0:
+                        self.logger.warning("Warning: One of the classes has zero samples. Weighted sampling may not be effective.")
+                        # Fallback to original weighting if a class is missing, or handle as per your needs
+                        weight_minority_class = 1.0
+                        weight_majority_class = 1.0
+                    else:
+                        # The desired effective ratio of minority samples to majority samples in the output
+                        # E.g., for 1:7, this is 1/7.
+                        desired_output_ratio_minority_to_majority = self.config.get('desired_minority_ratio', 1) / self.config.get('desired_majority_ratio', 7)
+
+                        # Calculate sampling weights for each class
+                        # Set majority class weight as 1.0 (arbitrary baseline, it can be any positive number)
+                        weight_majority_class = 1.0
+                        
+                        # Calculate minority class weight to achieve the desired overall output ratio.
+                        # Formula: W_minority = (Desired_Output_Ratio * Initial_Count_Majority) / Initial_Count_Minority
+                        weight_minority_class = (desired_output_ratio_minority_to_majority * initial_majority_count) / initial_minority_count
+                    
+                    # Map these calculated weights back to each sample based on its target label
+                    samples_weight = np.array([
+                        weight_minority_class if t == minority_label else weight_majority_class
+                        for t in train_targets
+                    ])
                     # Create sampler
                     sampler = WeightedRandomSampler(weights=samples_weight, num_samples=len(samples_weight), replacement=True)
                     fold_train_loader = DataLoader(
@@ -812,13 +851,53 @@ class BreastCancerTrainerMV:
                 
                 if self.config['oversample_minority']:
                     # --- WeightedRandomSampler for minority oversampling ---
-                    # Get targets for the current training fold (only from main data, external data is not used for weighting)
+                    # Get targets for the current training fold (only from main data)
+                    fold_train_df = pd.read_csv(fold_train_path)
+                    # Ensure targets are 0 or 1. 'cancer' column is assumed to contain these labels.
                     train_targets = fold_train_df[self.config.get('target_col', 'cancer')].values
-                    # Calculate class weights for sampling
-                    class_sample_counts = np.array([len(np.where(train_targets == t)[0]) for t in np.unique(train_targets)])
-                    weight = 1. / class_sample_counts
-                    samples_weight = np.array([weight[t] for t in train_targets])
-                    samples_weight = torch.from_numpy(samples_weight).double()
+                    
+                    # Get unique class labels and their counts
+                    unique_classes, class_counts = np.unique(train_targets, return_counts=True)
+                    class_to_count = dict(zip(unique_classes, class_counts))
+
+                    # Define the desired effective ratio for the *sampled output*:
+                    # We want minority (label 1) : majority (label 0) to be 1:7 overall in the sampled data.
+                    # This means for every 1 sampled minority, there should be 7 sampled majority.
+                    # This maintains the majority as the more frequent class, but reduces the imbalance.
+                    
+                    # Assume label 1 is the minority class and label 0 is the majority class.
+                    # Adjust `minority_label` and `majority_label` if your labels are different.
+                    minority_label = 1
+                    majority_label = 0
+                    
+                    # Get initial counts of minority and majority classes from the dataset
+                    initial_minority_count = class_to_count.get(minority_label, 0)
+                    initial_majority_count = class_to_count.get(majority_label, 0)
+
+                    # Safety check: ensure both classes exist to avoid division by zero
+                    if initial_minority_count == 0 or initial_majority_count == 0:
+                        self.logger.warning("Warning: One of the classes has zero samples. Weighted sampling may not be effective.")
+                        # Fallback to original weighting if a class is missing, or handle as per your needs
+                        weight_minority_class = 1.0
+                        weight_majority_class = 1.0
+                    else:
+                        # The desired effective ratio of minority samples to majority samples in the output
+                        # E.g., for 1:7, this is 1/7.
+                        desired_output_ratio_minority_to_majority = self.config.get('desired_minority_ratio', 1) / self.config.get('desired_majority_ratio', 7)
+
+                        # Calculate sampling weights for each class
+                        # Set majority class weight as 1.0 (arbitrary baseline, it can be any positive number)
+                        weight_majority_class = 1.0
+                        
+                        # Calculate minority class weight to achieve the desired overall output ratio.
+                        # Formula: W_minority = (Desired_Output_Ratio * Initial_Count_Majority) / Initial_Count_Minority
+                        weight_minority_class = (desired_output_ratio_minority_to_majority * initial_majority_count) / initial_minority_count
+                    
+                    # Map these calculated weights back to each sample based on its target label
+                    samples_weight = np.array([
+                        weight_minority_class if t == minority_label else weight_majority_class
+                        for t in train_targets
+                    ])
                     # Create sampler
                     sampler = WeightedRandomSampler(weights=samples_weight, num_samples=len(samples_weight), replacement=True)
                     fold_train_loader = DataLoader(
