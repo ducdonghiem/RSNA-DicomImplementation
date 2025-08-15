@@ -92,8 +92,10 @@ class BreastCancerTrainerMV:
             'accuracy': 'Acc',
             'balanced_accuracy': 'Balanced Acc',
             'pF1': 'pF1',          # This ensures 'pF1' remains 'pF1'
+            'F1': 'F1',
             'macroF1': 'MacroF1',  # This ensures 'MacroF1' remains 'MacroF1'
-            'auc_roc': 'AUC',
+            'auc_roc': 'AUC ROC',
+            'pr_auc': 'PR AUC',
             'recall': 'Recall',
             'precision': 'Precision'
         }
@@ -604,8 +606,10 @@ class BreastCancerTrainerMV:
             'val_accuracy': [],
             'val_balanced_accuracy': [],
             'val_pF1': [],
+            'val_F1': [],
             'val_macroF1': [],
             'val_auc_roc': [],
+            'val_pr_roc': [],
             'val_recall': [],
             'val_precision': []
         }
@@ -626,8 +630,10 @@ class BreastCancerTrainerMV:
                         fold_results['val_accuracy'].append(last_row['Val Acc'])
                         fold_results['val_balanced_accuracy'].append(last_row['Val Balanced Acc'])
                         fold_results['val_pF1'].append(last_row['Val pF1'])
+                        fold_results['val_F1'].append(last_row['Val F1'])
                         fold_results['val_macroF1'].append(last_row['Val MacroF1'])
-                        fold_results['val_auc_roc'].append(last_row['Val AUC'])
+                        fold_results['val_auc_roc'].append(last_row['Val AUC ROC'])
+                        fold_results['val_pr_auc'].append(last_row['Val PR AUC'])
                         fold_results['val_recall'].append(last_row['Val Recall'])
                         fold_results['val_precision'].append(last_row['Val Precision']) 
                     else:
@@ -859,8 +865,10 @@ class BreastCancerTrainerMV:
                 fold_results['val_accuracy'].append(best_val_metrics['accuracy'])
                 fold_results['val_balanced_accuracy'].append(best_val_metrics['balanced_accuracy'])
                 fold_results['val_pF1'].append(best_val_metrics['pF1'])
+                fold_results['val_F1'].append(best_val_metrics['F1'])
                 fold_results['val_macroF1'].append(best_val_metrics['macroF1'])
                 fold_results['val_auc_roc'].append(best_val_metrics.get('auc_roc', 0.0))
+                fold_results['val_pr_auc'].append(best_val_metrics.get('pr_auc', 0.0))
                 fold_results['val_recall'].append(best_val_metrics['recall'])
                 fold_results['val_precision'].append(best_val_metrics['precision'])
 
@@ -1114,15 +1122,19 @@ class BreastCancerTrainerMV:
                 f'Train Acc: {train_metrics["accuracy"]:.4f}, '
                 f'Train Balanced Acc: {train_metrics["balanced_accuracy"]:.4f}, '
                 f'Train pF1: {train_metrics["pF1"]:.4f}, '
+                f'Train F1: {train_metrics["F1"]:.4f}, '
                 f'Train MacroF1: {train_metrics["macroF1"]:.4f}, '
-                f'Train AUC: {train_metrics["auc_roc"]:.4f}, '
+                f'Train AUC ROC: {train_metrics["auc_roc"]:.4f}, '
+                f'Train PR AUC: {train_metrics["pr_auc"]:.4f}, '
                 f'Train Recall: {train_metrics["recall"]:.4f}, '
                 f'Train Precision: {train_metrics["precision"]:.4f}, '
                 f'Val Acc: {val_metrics["accuracy"]:.4f}, '
                 f'Val Balanced Acc: {val_metrics["balanced_accuracy"]:.4f}, '
                 f'Val pF1: {val_metrics["pF1"]:.4f}, '
+                f'Val F1: {val_metrics["F1"]:.4f}, '
                 f'Val MacroF1: {val_metrics["macroF1"]:.4f}, '
-                f'Val AUC: {val_metrics["auc_roc"]:.4f}, '
+                f'Val AUC ROC: {val_metrics["auc_roc"]:.4f}, '
+                f'Val PR AUC: {val_metrics["pr_auc"]:.4f}, '
                 f'Val Recall: {val_metrics["recall"]:.4f}, '
                 f'Val Precision: {val_metrics["precision"]:.4f}'
             )
@@ -1139,8 +1151,8 @@ class BreastCancerTrainerMV:
                     writer = csv.writer(f)
                     writer.writerow([
                         "Epoch", "Train Loss", "Val Loss",
-                        "Train Acc", "Train Balanced Acc", "Train pF1", "Train MacroF1", "Train AUC", "Train Recall", "Train Precision",
-                        "Val Acc", "Val Balanced Acc", "Val pF1", "Val MacroF1", "Val AUC", "Val Recall", "Val Precision"
+                        "Train Acc", "Train Balanced Acc", "Train pF1", "Train F1", "Train MacroF1", "Train AUC ROC", "Train PR AUC", "Train Recall", "Train Precision",
+                        "Val Acc", "Val Balanced Acc", "Val pF1", "Val F1", "Val MacroF1", "Val AUC ROC", "Val PR AUC", "Val Recall", "Val Precision"
                     ])
 
             # Append metrics for the current epoch
@@ -1151,15 +1163,19 @@ class BreastCancerTrainerMV:
                     train_metrics["accuracy"],
                     train_metrics["balanced_accuracy"],
                     train_metrics["pF1"],
+                    train_metrics["F1"],
                     train_metrics["macroF1"],
                     train_metrics.get("auc_roc", 0.0),
+                    train_metrics.get("pr_auc", 0.0),
                     train_metrics["recall"],
                     train_metrics["precision"],
                     val_metrics["accuracy"],
                     val_metrics["balanced_accuracy"],
                     val_metrics["pF1"],
+                    val_metrics["F1"],
                     val_metrics["macroF1"],
                     val_metrics.get("auc_roc", 0.0),
+                    val_metrics.get("pr_auc", 0.0),
                     val_metrics["recall"],
                     val_metrics["precision"]
                 ])
@@ -1185,8 +1201,10 @@ class BreastCancerTrainerMV:
                 f"Acc: {fold_results['val_accuracy'][i]:.4f}, "
                 f"Balanced Acc: {fold_results['val_balanced_accuracy'][i]:.4f}, "
                 f"pF1: {fold_results['val_pF1'][i]:.4f}, "
+                f"F1: {fold_results['val_F1'][i]:.4f}, "
                 f"MacroF1: {fold_results['val_macroF1'][i]:.4f}, "
                 f"AUC-ROC: {fold_results['val_auc_roc'][i]:.4f}, "
+                f"PR-AUC: {fold_results['val_pr_auc'][i]:.4f}, "
                 f"Recall: {fold_results['val_recall'][i]:.4f}, "
                 f"Precision: {fold_results['val_precision'][i]:.4f}"
             )
@@ -1198,10 +1216,14 @@ class BreastCancerTrainerMV:
         std_bal_acc = np.std(fold_results['val_balanced_accuracy'])
         mean_pf1 = np.mean(fold_results['val_pF1'])
         std_pf1 = np.std(fold_results['val_pF1'])
+        mean_f1 = np.mean(fold_results['val_F1'])
+        std_f1 = np.std(fold_results['val_F1'])
         mean_macro_f1 = np.mean(fold_results['val_macroF1'])
         std_macro_f1 = np.std(fold_results['val_macroF1'])
         mean_auc = np.mean(fold_results['val_auc_roc'])
         std_auc = np.std(fold_results['val_auc_roc'])
+        mean_pr_auc = np.mean(fold_results['val_pr_auc'])
+        std_pr_auc = np.std(fold_results['val_pr_auc'])
         mean_recall = np.mean(fold_results['val_recall'])
         std_recall = np.std(fold_results['val_recall'])
         mean_precision = np.mean(fold_results['val_precision'])
@@ -1212,8 +1234,10 @@ class BreastCancerTrainerMV:
         self.logger.info(f"Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
         self.logger.info(f"Mean Balanced Accuracy: {mean_bal_acc:.4f} ± {std_bal_acc:.4f}")
         self.logger.info(f"Mean pF1 Score: {mean_pf1:.4f} ± {std_pf1:.4f}")
+        self.logger.info(f"Mean F1 Score: {mean_f1:.4f} ± {std_f1:.4f}")
         self.logger.info(f"Mean macroF1 Score: {mean_macro_f1:.4f} ± {std_macro_f1:.4f}")
         self.logger.info(f"Mean AUC-ROC: {mean_auc:.4f} ± {std_auc:.4f}")
+        self.logger.info(f"Mean PR-ROC: {mean_pr_auc:.4f} ± {std_pr_auc:.4f}")
         self.logger.info(f"Mean Recall: {mean_recall:.4f} ± {std_recall:.4f}")
         self.logger.info(f"Mean Precision: {mean_precision:.4f} ± {std_precision:.4f}")
         self.logger.info("="*50)
@@ -1473,8 +1497,10 @@ class BreastCancerTrainerMV:
         self.logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
         self.logger.info(f"Test Balanced Accuracy: {test_metrics['balanced_accuracy']:.4f}")
         self.logger.info(f"Test pF1: {test_metrics['pF1']:.4f}")
+        self.logger.info(f"Test F1: {test_metrics['F1']:.4f}")
         self.logger.info(f"Test macroF1: {test_metrics['macroF1']:.4f}")
         self.logger.info(f"Test AUC-ROC: {test_metrics.get('auc_roc', 0.0):.4f}")
+        self.logger.info(f"Test PR-AUC: {test_metrics.get('pr_auc', 0.0):.4f}")
         self.logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
         self.logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
         # self.logger.info(f"Test Accuracy: {float(test_metrics['accuracy']):.4f}")

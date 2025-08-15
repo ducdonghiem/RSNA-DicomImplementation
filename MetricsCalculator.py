@@ -1,6 +1,7 @@
 # from sklearn.metrics import balanced_accuracy_score, f1_score, roc_auc_score, classification_report
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 from typing import Dict, List, Tuple, Optional, Union
+import numpy as np
 
 class MetricsCalculator:
     """Utility class for calculating various metrics."""
@@ -11,7 +12,7 @@ class MetricsCalculator:
         metrics = {
             'accuracy': float(sum(a == b for a, b in zip(y_true, y_pred))) / len(y_true),
             'balanced_accuracy': MetricsCalculator._balanced_accuracy_score(y_true, y_pred),
-            'pF1': MetricsCalculator._f1_score(y_true, y_pred),
+            'F1': MetricsCalculator._f1_score(y_true, y_pred),
             'macroF1': MetricsCalculator._macro_f1_score(y_true, y_pred),
             'recall': MetricsCalculator._recall(y_true, y_pred),
             'precision': MetricsCalculator._precision(y_true, y_pred),
@@ -22,6 +23,10 @@ class MetricsCalculator:
                 metrics['auc_roc'] = float(roc_auc_score(y_true, y_prob))
             except ValueError:
                 metrics['auc_roc'] = 0.0
+
+            # Add pF1 when y_prob is available
+            metrics['pF1'] = MetricsCalculator._pf1_score(y_true, y_prob) # Call the new pF1 method
+            metrics['pr_auc'] = MetricsCalculator._pr_auc_score(y_true, y_prob) # Add PR AUC here
                 
         return metrics
     
@@ -35,7 +40,40 @@ class MetricsCalculator:
 
         return bal_acc
     
-    # F1 is pF1 (F1 for positive class)
+    # probabilistic F1 (no threshold)
+    def _pf1_score(y_true: List[int], y_prob: List[float]) -> float:
+        """
+        Calculate probabilistic F1 (pF1) score.
+        pF1 = 2 * pPrecision * pRecall / (pPrecision + pRecall)
+        """
+        p_precision = MetricsCalculator._p_precision(y_true, y_prob)
+        p_recall = MetricsCalculator._p_recall(y_true, y_prob)
+
+        if (p_precision + p_recall) == 0:
+            return 0.0
+        return 2 * (p_precision * p_recall) / (p_precision + p_recall)
+
+    def _p_precision(y_true: List[int], y_prob: List[float]) -> float:
+        """
+        Calculate probabilistic precision (pPrecision).
+        pPrecision = Sum(P(positive|true) * P(positive)) / Sum(P(positive))
+        This simplifies to Sum(y_prob[i] for i where y_true[i] == 1) / Sum(y_prob)
+        """
+        numerator = sum(y_prob[i] for i in range(len(y_true)) if y_true[i] == 1)
+        denominator = sum(y_prob)
+        return numerator / denominator if denominator > 0 else 0.0
+
+    def _p_recall(y_true: List[int], y_prob: List[float]) -> float:
+        """
+        Calculate probabilistic recall (pRecall).
+        pRecall = Sum(P(positive|true) * P(positive)) / Sum(P(true))
+        This simplifies to Sum(y_prob[i] for i where y_true[i] == 1) / Sum(1 for i where y_true[i] == 1)
+        """
+        numerator = sum(y_prob[i] for i in range(len(y_true)) if y_true[i] == 1)
+        denominator = sum(1 for val in y_true if val == 1) # Count of actual positive instances
+        return numerator / denominator if denominator > 0 else 0.0
+
+    # binary F1
     def _f1_score(y_true: List[int], y_pred: List[int]) -> float:
         """Calculate F1 score."""
         precision = MetricsCalculator._precision(y_true, y_pred)
@@ -72,3 +110,15 @@ class MetricsCalculator:
         FP = sum(1 for a, b in zip(y_true, y_pred) if a == 0 and b == 1)
         
         return TP / (TP + FP) if (TP + FP) > 0 else 0.0
+    
+    def _pr_auc_score(y_true: List[int], y_prob: List[float]) -> float:
+        """
+        Calculate the Area Under the Precision-Recall Curve (PR AUC).
+        """
+        try:
+            # Use sklearn's precision_recall_curve and auc to compute the score
+            precision, recall, _ = precision_recall_curve(y_true, y_prob)
+            return float(auc(recall, precision))
+        except ValueError:
+            # This can happen if there's only one class in y_true
+            return 0.0
